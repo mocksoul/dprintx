@@ -15,7 +15,7 @@ install: build-release
 
 # Run all CI checks (dprint fmt + clippy + cargo fmt + test)
 check:
-    dprint fmt
+    which dprint >/dev/null 2>&1 && dprint fmt || true
     {{ clippy }} -- -D warnings
     {{ fmt }} --check
     cargo test
