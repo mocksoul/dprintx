@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -85,8 +85,7 @@ impl LspProxy {
                     let mut seen = std::collections::HashSet::new();
                     for (_pattern, profile_name) in self.config.match_rules_iter() {
                         if seen.insert(profile_name.to_string())
-                            && let Some(config_path) =
-                                self.config.profile_config_path(profile_name)
+                            && let Some(config_path) = self.config.profile_config_path(profile_name)
                         {
                             profile_configs.push(config_path);
                         }
@@ -345,10 +344,7 @@ impl LspProxy {
                                     "id": id,
                                     "result": null,
                                 });
-                                write_lsp_message(
-                                    &stdout,
-                                    &serde_json::to_string(&error_resp)?,
-                                )?;
+                                write_lsp_message(&stdout, &serde_json::to_string(&error_resp)?)?;
                             }
                         }
                     }

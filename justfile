@@ -9,8 +9,8 @@ build-release:
 # Install (symlink already points to target/release)
 install: build-release
 
-# Run all CI checks (test + clippy + fmt)
+# Run all CI checks (clippy + fmt + test)
 check:
+    cargo-clippy -- -- -D warnings
+    cargo-fmt --check
     cargo test
-    cargo clippy -- -D warnings
-    cargo fmt --check

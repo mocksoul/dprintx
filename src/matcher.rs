@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use globset::{Glob, GlobMatcher};
 use std::path::{Path, PathBuf};
 
@@ -193,9 +193,11 @@ mod tests {
 
         let result = matcher.resolve_config(Path::new("/any/file.go"), &config);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("not defined in profiles"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("not defined in profiles")
+        );
     }
 }
