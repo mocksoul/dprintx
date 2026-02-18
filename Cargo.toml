@@ -1,16 +1,16 @@
 [package]
 name = "dprintx"
 version = "0.2.0"
-edition = "2024"
-license = "MIT"
-description = "Multi-profile wrapper for dprint — run multiple dprint configs with file matching rules"
-repository = "https://github.com/mocksoul/dprintx"
-keywords = ["dprint", "formatter", "multi-config", "code-formatting"]
 categories = ["development-tools", "command-line-utilities"]
+edition = "2024"
+keywords = ["dprint", "formatter", "multi-config", "code-formatting"]
+license = "MIT"
+repository = "https://github.com/mocksoul/dprintx"
+description = "Multi-profile wrapper for dprint — run multiple dprint configs with file matching rules"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0", features = ["preserve_order"] }
-globset = "0.4"
 anyhow = "1.0"
 dirs = "6.0"
+globset = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }

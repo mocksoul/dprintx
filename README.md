@@ -25,15 +25,15 @@ Config file: `~/.config/dprint/dprintx.jsonc`
   "dprint": "~/.cargo/bin/dprint",
   "profiles": {
     "maintainer": "~/.config/dprint/dprint-maintainer.jsonc",
-    "default": "~/.config/dprint/dprint-default.jsonc"
+    "default": "~/.config/dprint/dprint-default.jsonc",
   },
   "match": {
     "**/noc/cmdb/**": "maintainer",
     "**/noc/invapi/**": "maintainer",
-    "**": "default"
+    "**": "default",
   },
   "diff_pager": "delta -s",
-  "lsp_rewrite_uris": true
+  "lsp_rewrite_uris": true,
 }
 ```
 
@@ -60,8 +60,8 @@ Projects can define local formatting rules that override the matched profile.
 
 **How it works:**
 
-1. For each file being formatted, dprintx walks up the directory tree looking for `dprint.json` or `dprint.jsonc`
-   (stops at the first one found)
+1. For each file being formatted, dprintx walks up the directory tree looking for `dprint.json` or `dprint.jsonc` (stops
+   at the first one found)
 2. If found, it reads the local config and injects the matched profile path into `extends`
 3. A temporary merged config is written and passed to dprint instead of the profile config
 4. The temp file is auto-deleted when the command finishes (RAII guard)
@@ -74,8 +74,8 @@ Since dprint applies `extends` first and then overlays local settings on top, th
 // ~/projects/my-app/dprint.json — only the overrides you care about
 {
   "yaml": {
-    "commentSpacing": "ignore"
-  }
+    "commentSpacing": "ignore",
+  },
 }
 ```
 
@@ -85,8 +85,8 @@ When formatting files under `~/projects/my-app/`, dprintx generates a temporary 
 {
   "extends": "/home/user/.config/dprint/dprint-default.jsonc",
   "yaml": {
-    "commentSpacing": "ignore"
-  }
+    "commentSpacing": "ignore",
+  },
 }
 ```
 
@@ -116,7 +116,7 @@ forwarded to the dprint backend by appending the correct extension (e.g. `file:/
 
 ```jsonc
 {
-  "lsp_rewrite_uris": true
+  "lsp_rewrite_uris": true,
 }
 ```
 
@@ -186,8 +186,8 @@ cargo install --git https://github.com/mocksoul/dprintx
 
 ### Transparent dprint replacement
 
-Symlink `dprintx` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All
-unknown commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `dprintx.jsonc`):
+Symlink `dprintx` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All unknown
+commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `dprintx.jsonc`):
 
 ```bash
 ln -sf ~/.cargo/bin/dprintx ~/.local/bin/dprint
