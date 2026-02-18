@@ -1,6 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use globset::{Glob, GlobMatcher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::MconfConfig;
 
@@ -42,37 +42,129 @@ impl ProfileMatcher {
         }
         None
     }
+
+    /// Resolve file path to dprint config path.
+    ///
+    /// Logic:
+    /// 1. Match file against rules → get profile name → resolve to config path
+    /// 2. If no rule matches → use fallback config
+    pub fn resolve_config(&self, file_path: &Path, config: &MconfConfig) -> Result<PathBuf> {
+        if let Some(profile_name) = self.match_profile(file_path) {
+            if let Some(config_path) = config.profile_config_path(profile_name) {
+                return Ok(config_path);
+            }
+            bail!(
+                "profile '{}' referenced in match rules but not defined in profiles",
+                profile_name
+            );
+        }
+        Ok(config.fallback_path())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_match_first_wins() {
+    fn test_config() -> MconfConfig {
         let config_json = r#"{
             "dprint": "/usr/bin/dprint",
             "profiles": {
-                "strict": "/config/strict.jsonc",
-                "default": "/config/default.jsonc"
+                "maintainer": "/config/dprint-maintainer.jsonc",
+                "default": "/config/dprint-default.jsonc"
             },
             "match": {
-                "**/noc/cmdb/**": "strict",
+                "**/noc/cmdb/**": "maintainer",
+                "**/noc/invapi/**": "maintainer",
+                "**/mocksoul/gostern/**": "maintainer",
                 "**": "default"
             },
-            "fallback": "/config/default.jsonc"
+            "fallback": "/config/dprint-default.jsonc"
         }"#;
+        serde_json::from_str(config_json).unwrap()
+    }
 
-        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+    #[test]
+    fn test_match_first_wins() {
+        let config = test_config();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
 
         assert_eq!(
             matcher.match_profile(Path::new("/home/user/workspace/noc/cmdb/main.go")),
-            Some("strict")
+            Some("maintainer")
+        );
+        assert_eq!(
+            matcher.match_profile(Path::new("/home/user/workspace/noc/invapi/server.go")),
+            Some("maintainer")
         );
         assert_eq!(
             matcher.match_profile(Path::new("/home/user/other/file.go")),
             Some("default")
         );
+    }
+
+    #[test]
+    fn test_no_match_returns_none() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": { "strict": "/config/strict.jsonc" },
+            "match": { "**/noc/cmdb/**": "strict" },
+            "fallback": "/config/default.jsonc"
+        }"#;
+        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = ProfileMatcher::from_config(&config).unwrap();
+
+        // No catch-all "**" rule, so non-matching paths return None.
+        assert_eq!(
+            matcher.match_profile(Path::new("/home/user/other/file.go")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_resolve_config_matched() {
+        let config = test_config();
+        let matcher = ProfileMatcher::from_config(&config).unwrap();
+
+        let result = matcher
+            .resolve_config(Path::new("/workspace/noc/cmdb/main.go"), &config)
+            .unwrap();
+        assert_eq!(result, PathBuf::from("/config/dprint-maintainer.jsonc"));
+    }
+
+    #[test]
+    fn test_resolve_config_fallback() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": { "strict": "/config/strict.jsonc" },
+            "match": { "**/noc/cmdb/**": "strict" },
+            "fallback": "/config/default.jsonc"
+        }"#;
+        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = ProfileMatcher::from_config(&config).unwrap();
+
+        let result = matcher
+            .resolve_config(Path::new("/other/file.go"), &config)
+            .unwrap();
+        assert_eq!(result, PathBuf::from("/config/default.jsonc"));
+    }
+
+    #[test]
+    fn test_resolve_config_unknown_profile_errors() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {},
+            "match": { "**": "nonexistent" },
+            "fallback": "/config/default.jsonc"
+        }"#;
+        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = ProfileMatcher::from_config(&config).unwrap();
+
+        let result = matcher.resolve_config(Path::new("/any/file.go"), &config);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not defined in profiles"));
     }
 }

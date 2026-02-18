@@ -36,6 +36,13 @@ pub struct MconfConfig {
 
     /// Fallback config path when no match rule applies and no local dprint.json exists.
     pub fallback: String,
+
+    /// Optional diff pager command for `dprint check` (e.g. "delta -s").
+    /// When set, check produces unified diff output:
+    /// - stdout is TTY → pipe through pager
+    /// - stdout is pipe/redirect → raw unified diff
+    #[serde(default)]
+    pub diff_pager: Option<String>,
 }
 
 impl MconfConfig {
@@ -238,5 +245,37 @@ mod tests {
 
         let result = expand_tilde("/absolute/path");
         assert_eq!(result, PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn test_parse_full_mconf_jsonc() {
+        let input = r#"{
+  // Path to real dprint binary
+  "dprint": "~/.cargo/bin/dprint",
+  "profiles": {
+    "maintainer": "~/.config/dprint/dprint-maintainer.jsonc",
+    "default": "~/.config/dprint/dprint-default.jsonc",
+  },
+  "match": {
+    "**/noc/cmdb/**": "maintainer",
+    "**/noc/invapi/**": "maintainer",
+    /* catch-all */
+    "**": "default",
+  },
+  "fallback": "~/.config/dprint/dprint-default.jsonc",
+}"#;
+        let json = strip_jsonc_comments(input);
+        let config: MconfConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(config.dprint, "~/.cargo/bin/dprint");
+        assert_eq!(config.profiles.len(), 2);
+        assert_eq!(config.fallback, "~/.config/dprint/dprint-default.jsonc");
+
+        // Verify match rules preserve order (first match semantics).
+        let rules: Vec<(&str, &str)> = config.match_rules_iter().collect();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0], ("**/noc/cmdb/**", "maintainer"));
+        assert_eq!(rules[1], ("**/noc/invapi/**", "maintainer"));
+        assert_eq!(rules[2], ("**", "default"));
     }
 }
