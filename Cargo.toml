@@ -3,6 +3,10 @@ name = "dprintx"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+description = "Multi-profile wrapper for dprint — run multiple dprint configs with file matching rules"
+repository = "https://github.com/mocksoul/dprintx"
+keywords = ["dprint", "formatter", "multi-config", "code-formatting"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
