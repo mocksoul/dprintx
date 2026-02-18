@@ -1,6 +1,6 @@
 [package]
 name = "dprintx"
-version = "0.2.0"
+version = "0.2.1"
 categories = ["development-tools", "command-line-utilities"]
 edition = "2024"
 keywords = ["dprint", "formatter", "multi-config", "code-formatting"]
