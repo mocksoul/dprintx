@@ -39,8 +39,8 @@ When `diff_pager` is set, `dprint check` produces unified diff output instead of
 - **stdout is pipe/redirect** → raw unified diff
 
 ```bash
-dprint check              # pretty diff via delta
-dprint check > fix.patch  # unified diff to file
+dprint-mconf check              # pretty diff via delta
+dprint-mconf check > fix.patch  # unified diff to file
 ```
 
 Without `diff_pager`, `dprint check` behaves exactly like the original dprint.
@@ -49,30 +49,30 @@ Without `diff_pager`, `dprint check` behaves exactly like the original dprint.
 
 ```bash
 # stdin — single file, filename is used for config matching (input is read from stdin)
-dprint fmt --stdin path/to/file.yaml < input.yaml
+dprint-mconf fmt --stdin path/to/file.yaml < input.yaml
 
 # fmt/check — groups files by profile, calls dprint per group
-dprint fmt
-dprint check
-dprint fmt file1.go file2.yaml   # explicit file list
+dprint-mconf fmt
+dprint-mconf check
+dprint-mconf fmt file1.go file2.yaml   # explicit file list
 
 # list all files that would be formatted (merged from all profiles)
-dprint output-file-paths
+dprint-mconf output-file-paths
 
 # show which config is used
-dprint config              # all profiles and rules
-dprint config path/to/file # resolved config for a file
+dprint-mconf config              # all profiles and rules
+dprint-mconf config path/to/file # resolved config for a file
 
 # LSP proxy — spawns dprint lsp per profile, routes by file URI
-dprint lsp
+dprint-mconf lsp
 ```
 
-`dprint check` exits with code 1 if any files need formatting.
+`dprint-mconf check` exits with code 1 if any files need formatting.
 
 Use `--mconf <PATH>` to override the config location (default: `~/.config/dprint/mconf.jsonc`):
 
 ```bash
-dprint --mconf /path/to/custom.jsonc fmt
+dprint-mconf --mconf /path/to/custom.jsonc fmt
 ```
 
 All unknown commands and flags are passed through to the real dprint (`--help`, `-V`, `license`, `completions`, etc.).
@@ -80,6 +80,15 @@ All unknown commands and flags are passed through to the real dprint (`--help`, 
 ## Install
 
 ```bash
-cargo build --release
-ln -sf $(pwd)/target/release/dprint-mconf ~/.local/bin/dprint
+cargo install --path .
 ```
+
+### Transparent dprint replacement
+
+Symlink `dprint-mconf` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All unknown commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `mconf.jsonc`):
+
+```bash
+ln -sf ~/.cargo/bin/dprint-mconf ~/.local/bin/dprint
+```
+
+Now `dprint fmt`, `dprint check`, `dprint lsp` etc. all go through mconf automatically. No changes needed in editor configs, CI scripts, or muscle memory.
