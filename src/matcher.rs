@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 use globset::{Glob, GlobMatcher};
 use std::path::{Path, PathBuf};
 
-use crate::config::{self, MconfConfig};
+use crate::config::{self, DprintxConfig};
 
 /// A compiled match rule: glob matcher + profile name.
 struct Rule {
@@ -17,7 +17,7 @@ pub struct ProfileMatcher {
 
 impl ProfileMatcher {
     /// Build a matcher from config match rules.
-    pub fn from_config(config: &MconfConfig) -> Result<Self> {
+    pub fn from_config(config: &DprintxConfig) -> Result<Self> {
         let mut rules = Vec::new();
 
         for (pattern, profile) in config.match_rules_iter() {
@@ -53,7 +53,7 @@ impl ProfileMatcher {
     pub fn resolve_config(
         &self,
         file_path: &Path,
-        config: &MconfConfig,
+        config: &DprintxConfig,
     ) -> Result<Option<PathBuf>> {
         if let Some(profile_name) = self.match_profile(file_path) {
             if let Some(config_path) = config.profile_config_path(profile_name) {
@@ -72,7 +72,7 @@ impl ProfileMatcher {
 mod tests {
     use super::*;
 
-    fn test_config() -> MconfConfig {
+    fn test_config() -> DprintxConfig {
         let config_json = r#"{
             "dprint": "/usr/bin/dprint",
             "profiles": {
@@ -115,7 +115,7 @@ mod tests {
             "profiles": { "strict": "/config/strict.jsonc" },
             "match": { "**/noc/cmdb/**": "strict" }
         }"#;
-        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
 
         // No catch-all "**" rule, so non-matching paths return None.
@@ -146,7 +146,7 @@ mod tests {
             "profiles": { "strict": "/config/strict.jsonc" },
             "match": { "**/noc/cmdb/**": "strict" }
         }"#;
-        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
 
         let result = matcher
@@ -169,7 +169,7 @@ mod tests {
                 "**": "default"
             }
         }"#;
-        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
 
         // ~/workspace/myproject/foo.lua should match "special" after tilde expansion.
@@ -188,7 +188,7 @@ mod tests {
             "profiles": {},
             "match": { "**": "nonexistent" }
         }"#;
-        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
 
         let result = matcher.resolve_config(Path::new("/any/file.go"), &config);

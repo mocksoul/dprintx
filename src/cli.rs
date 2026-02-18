@@ -1,8 +1,8 @@
 /// Parsed CLI result.
 #[derive(Debug)]
 pub struct Cli {
-    /// Override mconf config path.
-    pub mconf: Option<String>,
+    /// Override config path.
+    pub config: Option<String>,
     /// Parsed command.
     pub command: CliCommand,
 }
@@ -35,20 +35,20 @@ impl Cli {
     }
 
     fn parse_from(args: &[String]) -> Self {
-        let mut mconf: Option<String> = None;
+        let mut config: Option<String> = None;
         let mut rest: Vec<String> = Vec::new();
 
-        // Extract --mconf <path> from anywhere in args.
+        // Extract --config <path> from anywhere in args.
         let mut i = 0;
         while i < args.len() {
-            if args[i] == "--mconf" {
+            if args[i] == "--config" {
                 if i + 1 < args.len() {
-                    mconf = Some(args[i + 1].clone());
+                    config = Some(args[i + 1].clone());
                     i += 2;
                     continue;
                 }
-            } else if let Some(val) = args[i].strip_prefix("--mconf=") {
-                mconf = Some(val.to_string());
+            } else if let Some(val) = args[i].strip_prefix("--config=") {
+                config = Some(val.to_string());
                 i += 1;
                 continue;
             }
@@ -59,7 +59,7 @@ impl Cli {
         // No subcommand or help flags → passthrough.
         if rest.is_empty() {
             return Self {
-                mconf,
+                config,
                 command: CliCommand::Passthrough { args: rest },
             };
         }
@@ -79,7 +79,7 @@ impl Cli {
             _ => CliCommand::Passthrough { args: rest },
         };
 
-        Self { mconf, command }
+        Self { config, command }
     }
 
     fn parse_fmt(args: &[String]) -> CliCommand {
@@ -185,16 +185,16 @@ mod tests {
     }
 
     #[test]
-    fn test_mconf_extracted() {
-        let cli = Cli::parse_from(&args("--mconf /tmp/test.jsonc fmt a.go"));
-        assert_eq!(cli.mconf.as_deref(), Some("/tmp/test.jsonc"));
+    fn test_config_extracted() {
+        let cli = Cli::parse_from(&args("--config /tmp/test.jsonc fmt a.go"));
+        assert_eq!(cli.config.as_deref(), Some("/tmp/test.jsonc"));
         assert!(matches!(cli.command, CliCommand::Fmt { .. }));
     }
 
     #[test]
-    fn test_mconf_equals() {
-        let cli = Cli::parse_from(&args("--mconf=/tmp/test.jsonc check"));
-        assert_eq!(cli.mconf.as_deref(), Some("/tmp/test.jsonc"));
+    fn test_config_equals() {
+        let cli = Cli::parse_from(&args("--config=/tmp/test.jsonc check"));
+        assert_eq!(cli.config.as_deref(), Some("/tmp/test.jsonc"));
         assert!(matches!(cli.command, CliCommand::Check { .. }));
     }
 

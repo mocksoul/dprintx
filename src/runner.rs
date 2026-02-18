@@ -3,7 +3,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use crate::config::{self, MconfConfig};
+use crate::config::{self, DprintxConfig};
 use crate::matcher::ProfileMatcher;
 
 /// Runs the real dprint binary with appropriate config.
@@ -12,7 +12,7 @@ pub struct DprintRunner {
 }
 
 impl DprintRunner {
-    pub fn new(config: &MconfConfig) -> Self {
+    pub fn new(config: &DprintxConfig) -> Self {
         Self {
             dprint_bin: config.dprint_path(),
         }
@@ -24,7 +24,7 @@ impl DprintRunner {
         &self,
         filename: &str,
         matcher: &ProfileMatcher,
-        config: &MconfConfig,
+        config: &DprintxConfig,
     ) -> Result<()> {
         let abs_path =
             std::fs::canonicalize(filename).unwrap_or_else(|_| std::path::PathBuf::from(filename));
@@ -98,7 +98,11 @@ impl DprintRunner {
     }
 
     /// Output file paths for all profiles (deduped, filtered by match rules).
-    pub fn output_file_paths(&self, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
+    pub fn output_file_paths(
+        &self,
+        matcher: &ProfileMatcher,
+        config: &DprintxConfig,
+    ) -> Result<()> {
         let mut seen = std::collections::HashSet::new();
         let mut profile_configs: Vec<std::path::PathBuf> = Vec::new();
 
@@ -142,7 +146,7 @@ impl DprintRunner {
     }
 
     /// Passthrough raw args to real dprint (unknown commands, --help, etc).
-    /// For --help/-h: capture output and append mconf section.
+    /// For --help/-h: capture output and append dprintx section.
     pub fn passthrough_raw(&self, args: &[String]) -> Result<()> {
         let is_help = args.iter().any(|a| a == "--help" || a == "-h");
 
@@ -155,18 +159,16 @@ impl DprintRunner {
             io::stdout().write_all(&output.stdout)?;
             io::stderr().write_all(&output.stderr)?;
 
-            // Append mconf-specific section.
+            // Append dprintx-specific section.
             println!();
-            println!("DPRINT-MCONF OPTIONS:");
-            println!(
-                "  --mconf <PATH>      Override mconf config path (~/.config/dprint/mconf.jsonc)"
-            );
+            println!("DPRINTX OPTIONS:");
+            println!("  --config <PATH>     Override config path (~/.config/dprint/dprintx.jsonc)");
             println!();
-            println!("DPRINT-MCONF SUBCOMMANDS:");
-            println!("  config              Show resolved mconf profiles and match rules.");
+            println!("DPRINTX SUBCOMMANDS:");
+            println!("  config              Show resolved profiles and match rules.");
             println!("  config <FILE>       Show which dprint config would be used for a file.");
             println!();
-            println!("DPRINT-MCONF CONFIG (mconf.jsonc):");
+            println!("DPRINTX CONFIG (dprintx.jsonc):");
             println!("  diff_pager          Pager for `dprint check` diffs (e.g. \"delta -s\").");
             println!();
 
@@ -190,7 +192,7 @@ impl DprintRunner {
         &self,
         files: &[String],
         matcher: &ProfileMatcher,
-        config: &MconfConfig,
+        config: &DprintxConfig,
     ) -> Result<()> {
         // Hold all merged config guards alive until dprint finishes.
         let mut _guards: Vec<config::TempConfig> = Vec::new();
@@ -249,13 +251,13 @@ impl DprintRunner {
     ///
     /// For each profile, runs `dprint output-file-paths --config <profile>` to get the
     /// file list, filters by match rules, then runs `dprint fmt --config <profile> <files>`.
-    pub fn fmt_all(&self, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
+    pub fn fmt_all(&self, matcher: &ProfileMatcher, config: &DprintxConfig) -> Result<()> {
         self.run_all("fmt", matcher, config)
     }
 
     /// Check all files using all profiles.
     /// If diff_pager is configured, produces unified diff output.
-    pub fn check_all(&self, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
+    pub fn check_all(&self, matcher: &ProfileMatcher, config: &DprintxConfig) -> Result<()> {
         if config.diff_pager.is_some() {
             return self.check_diff_all(matcher, config);
         }
@@ -264,7 +266,12 @@ impl DprintRunner {
 
     /// Run a subcommand (fmt/check) for all profiles.
     /// Files are grouped by effective config (merged local + profile, or just profile).
-    fn run_all(&self, subcmd: &str, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
+    fn run_all(
+        &self,
+        subcmd: &str,
+        matcher: &ProfileMatcher,
+        config: &DprintxConfig,
+    ) -> Result<()> {
         let mut failed = false;
 
         // Collect unique profile config paths in order.
@@ -298,9 +305,7 @@ impl DprintRunner {
                 })?;
 
             if !output.status.success() {
-                eprintln!(
-                    "dprint-mconf: warning: output-file-paths failed for profile {profile_name}"
-                );
+                eprintln!("dprintx: warning: output-file-paths failed for profile {profile_name}");
                 continue;
             }
 
@@ -371,7 +376,7 @@ impl DprintRunner {
         &self,
         files: &[String],
         matcher: &ProfileMatcher,
-        config: &MconfConfig,
+        config: &DprintxConfig,
     ) -> Result<()> {
         if config.diff_pager.is_some() {
             return self.check_diff_files(files, matcher, config);
@@ -430,7 +435,7 @@ impl DprintRunner {
     // ---- diff_pager support ----
 
     /// Check all files with unified diff output.
-    fn check_diff_all(&self, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
+    fn check_diff_all(&self, matcher: &ProfileMatcher, config: &DprintxConfig) -> Result<()> {
         let mut all_diff = String::new();
         let mut _guards: Vec<config::TempConfig> = Vec::new();
 
@@ -484,7 +489,7 @@ impl DprintRunner {
         &self,
         files: &[String],
         matcher: &ProfileMatcher,
-        config: &MconfConfig,
+        config: &DprintxConfig,
     ) -> Result<()> {
         let mut all_diff = String::new();
         let mut _guards: Vec<config::TempConfig> = Vec::new();
@@ -570,8 +575,8 @@ impl DprintRunner {
         let label = file.to_string();
 
         let tmp_dir = std::env::temp_dir();
-        let orig_path = tmp_dir.join("dprint-mconf-orig");
-        let fmt_path = tmp_dir.join("dprint-mconf-fmt");
+        let orig_path = tmp_dir.join("dprintx-orig");
+        let fmt_path = tmp_dir.join("dprintx-fmt");
         std::fs::write(&orig_path, &original)?;
         std::fs::write(&fmt_path, formatted.as_bytes())?;
 
@@ -594,7 +599,7 @@ impl DprintRunner {
     }
 
     /// Output collected diff: through pager if TTY, raw if pipe.
-    fn output_diff(&self, diff: &str, config: &MconfConfig) -> Result<()> {
+    fn output_diff(&self, diff: &str, config: &DprintxConfig) -> Result<()> {
         if diff.is_empty() {
             return Ok(());
         }

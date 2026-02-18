@@ -8,30 +8,30 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use cli::{Cli, CliCommand};
-use config::MconfConfig;
+use config::DprintxConfig;
 use matcher::ProfileMatcher;
 use runner::DprintRunner;
 
 fn main() -> Result<()> {
     // Prevent infinite recursion when symlinked as `dprint` with no config.
-    if std::env::var("DPRINT_MCONF_ACTIVE").is_ok() {
+    if std::env::var("DPRINTX_ACTIVE").is_ok() {
         anyhow::bail!(
-            "dprint-mconf: recursive call detected — \
-             create ~/.config/dprint/mconf.jsonc or ensure the real dprint is in PATH"
+            "dprintx: recursive call detected — \
+             create ~/.config/dprint/dprintx.jsonc or ensure the real dprint is in PATH"
         );
     }
 
     let cli = Cli::parse();
-    let config = load_config(cli.mconf.as_deref())?;
+    let config = load_config(cli.config.as_deref())?;
 
     // No config — passthrough everything to dprint.
     let Some(config) = config else {
         let args: Vec<String> = std::env::args().skip(1).collect();
         let status = std::process::Command::new("dprint")
-            .env("DPRINT_MCONF_ACTIVE", "1")
+            .env("DPRINTX_ACTIVE", "1")
             .args(&args)
             .status()
-            .context("cannot run dprint (no mconf config, falling back to dprint in PATH)")?;
+            .context("cannot run dprint (no dprintx config, falling back to dprint in PATH)")?;
         std::process::exit(status.code().unwrap_or(1));
     };
 
@@ -78,17 +78,17 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_config(mconf_path: Option<&str>) -> Result<Option<MconfConfig>> {
-    match mconf_path {
-        // Explicit --mconf path: must exist and be valid.
-        Some(path) => MconfConfig::load(Path::new(path)).map(Some),
+fn load_config(config_path: Option<&str>) -> Result<Option<DprintxConfig>> {
+    match config_path {
+        // Explicit --config path: must exist and be valid.
+        Some(path) => DprintxConfig::load(Path::new(path)).map(Some),
         // Default path: None if file doesn't exist, error if invalid.
-        None => MconfConfig::try_load_default(),
+        None => DprintxConfig::try_load_default(),
     }
 }
 
 /// Show which config would be used for a given file.
-fn cmd_config(matcher: &ProfileMatcher, config: &MconfConfig, file: Option<&str>) -> Result<()> {
+fn cmd_config(matcher: &ProfileMatcher, config: &DprintxConfig, file: Option<&str>) -> Result<()> {
     match file {
         Some(f) => {
             let abs_path = std::fs::canonicalize(f).unwrap_or_else(|_| std::path::PathBuf::from(f));

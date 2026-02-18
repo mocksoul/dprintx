@@ -24,7 +24,7 @@ impl Drop for TempConfig {
     }
 }
 
-/// mconf.jsonc configuration.
+/// dprintx.jsonc configuration.
 ///
 /// Format:
 /// ```jsonc
@@ -42,7 +42,7 @@ impl Drop for TempConfig {
 /// }
 /// ```
 #[derive(Debug, Deserialize)]
-pub struct MconfConfig {
+pub struct DprintxConfig {
     /// Path to real dprint binary.
     pub dprint: String,
 
@@ -70,13 +70,13 @@ pub struct MconfConfig {
     pub lsp_rewrite_uris: bool,
 }
 
-impl MconfConfig {
-    /// Try to load config from the default location (~/.config/dprint/mconf.jsonc).
+impl DprintxConfig {
+    /// Try to load config from the default location (~/.config/dprint/dprintx.jsonc).
     /// Returns Ok(None) if the file doesn't exist.
     /// Returns Err if the file exists but is invalid.
     pub fn try_load_default() -> Result<Option<Self>> {
         let config_dir = dirs::config_dir().context("cannot determine config directory")?;
-        let path = config_dir.join("dprint").join("mconf.jsonc");
+        let path = config_dir.join("dprint").join("dprintx.jsonc");
         if !path.exists() {
             return Ok(None);
         }
@@ -91,8 +91,8 @@ impl MconfConfig {
         // Strip JSONC comments (// and /* */) before parsing.
         let json = strip_jsonc_comments(&content);
 
-        let config: MconfConfig =
-            serde_json::from_str(&json).with_context(|| "invalid mconf.jsonc format")?;
+        let config: DprintxConfig =
+            serde_json::from_str(&json).with_context(|| "invalid dprintx.jsonc format")?;
 
         Ok(config)
     }
@@ -191,8 +191,8 @@ pub fn inject_extends(config: &mut serde_json::Value, profile_config_path: &Path
 /// Returns None if no local config is found (caller should use profile config directly).
 /// Returns a `TempConfig` guard that auto-deletes the file on drop.
 ///
-/// The temp file is written to `$XDG_RUNTIME_DIR/dprint-mconf/` (per-user, secure).
-/// Falls back to `$TMPDIR/dprint-mconf/` if unavailable.
+/// The temp file is written to `$XDG_RUNTIME_DIR/dprintx/` (per-user, secure).
+/// Falls back to `$TMPDIR/dprintx/` if unavailable.
 pub fn build_merged_config(
     file_dir: &Path,
     profile_config_path: &Path,
@@ -224,12 +224,12 @@ pub fn build_merged_config(
 }
 
 /// Get the directory for merged config temp files.
-/// Prefers $XDG_RUNTIME_DIR/dprint-mconf/ (per-user tmpfs, mode 700).
-/// Falls back to $TMPDIR/dprint-mconf/.
+/// Prefers $XDG_RUNTIME_DIR/dprintx/ (per-user tmpfs, mode 700).
+/// Falls back to $TMPDIR/dprintx/.
 fn merged_config_dir() -> Result<PathBuf> {
     let dir = match dirs::runtime_dir() {
-        Some(runtime) => runtime.join("dprint-mconf"),
-        None => std::env::temp_dir().join("dprint-mconf"),
+        Some(runtime) => runtime.join("dprintx"),
+        None => std::env::temp_dir().join("dprintx"),
     };
 
     std::fs::create_dir_all(&dir)
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_full_mconf_jsonc() {
+    fn test_parse_full_dprintx_jsonc() {
         let input = r#"{
   // Path to real dprint binary
   "dprint": "~/.cargo/bin/dprint",
@@ -410,7 +410,7 @@ mod tests {
   },
 }"#;
         let json = strip_jsonc_comments(input);
-        let config: MconfConfig = serde_json::from_str(&json).unwrap();
+        let config: DprintxConfig = serde_json::from_str(&json).unwrap();
 
         assert_eq!(config.dprint, "~/.cargo/bin/dprint");
         assert_eq!(config.profiles.len(), 2);
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_find_local_config_direct() {
-        let dir = std::env::temp_dir().join("dprint-mconf-test-find-direct");
+        let dir = std::env::temp_dir().join("dprintx-test-find-direct");
         let _ = std::fs::create_dir_all(&dir);
         let config_path = dir.join("dprint.json");
         std::fs::write(&config_path, "{}").unwrap();
@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_find_local_config_walkup() {
-        let root = std::env::temp_dir().join("dprint-mconf-test-find-walkup");
+        let root = std::env::temp_dir().join("dprintx-test-find-walkup");
         let sub = root.join("a").join("b").join("c");
         let _ = std::fs::create_dir_all(&sub);
 
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn test_find_local_config_prefers_json_over_jsonc() {
-        let dir = std::env::temp_dir().join("dprint-mconf-test-find-prefer");
+        let dir = std::env::temp_dir().join("dprintx-test-find-prefer");
         let _ = std::fs::create_dir_all(&dir);
 
         // Both exist — dprint.json should be found first.
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn test_find_local_config_none() {
         // Use a directory with no dprint config in its ancestors (temp dir is unlikely to have one).
-        let dir = std::env::temp_dir().join("dprint-mconf-test-find-none");
+        let dir = std::env::temp_dir().join("dprintx-test-find-none");
         let _ = std::fs::create_dir_all(&dir);
 
         // This test might find a real dprint.json somewhere up the tree,
@@ -528,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_build_merged_config_with_local() {
-        let dir = std::env::temp_dir().join("dprint-mconf-test-build-merged");
+        let dir = std::env::temp_dir().join("dprintx-test-build-merged");
         let _ = std::fs::create_dir_all(&dir);
 
         // Write a local dprint.json.
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_build_merged_config_preserves_existing_extends() {
-        let dir = std::env::temp_dir().join("dprint-mconf-test-build-merged-extends");
+        let dir = std::env::temp_dir().join("dprintx-test-build-merged-extends");
         let _ = std::fs::create_dir_all(&dir);
 
         let local_path = dir.join("dprint.json");
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_read_local_config_json() {
-        let dir = std::env::temp_dir().join("dprint-mconf-test-read-local");
+        let dir = std::env::temp_dir().join("dprintx-test-read-local");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("dprint.json");
         std::fs::write(&path, r#"{"plugins": ["https://example.com/plugin.wasm"]}"#).unwrap();
@@ -598,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_read_local_config_jsonc() {
-        let dir = std::env::temp_dir().join("dprint-mconf-test-read-local-jsonc");
+        let dir = std::env::temp_dir().join("dprintx-test-read-local-jsonc");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("dprint.jsonc");
         std::fs::write(

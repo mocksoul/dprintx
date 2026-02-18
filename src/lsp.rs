@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::config::{self, MconfConfig};
+use crate::config::{self, DprintxConfig};
 use crate::matcher::ProfileMatcher;
 
 /// Timeout for reading LSP responses from backends.
@@ -83,7 +83,7 @@ fn apply_uri_rewrite(msg: &mut serde_json::Value, uri_languages: &HashMap<String
 pub struct LspProxy {
     dprint_bin: PathBuf,
     matcher: ProfileMatcher,
-    config: MconfConfig,
+    config: DprintxConfig,
 }
 
 /// A running dprint lsp backend.
@@ -94,7 +94,7 @@ struct Backend {
 }
 
 impl LspProxy {
-    pub fn new(dprint_bin: PathBuf, matcher: ProfileMatcher, config: MconfConfig) -> Self {
+    pub fn new(dprint_bin: PathBuf, matcher: ProfileMatcher, config: DprintxConfig) -> Self {
         Self {
             dprint_bin,
             matcher,
@@ -105,7 +105,7 @@ impl LspProxy {
     /// Run the LSP proxy. Blocks forever (until stdin closes).
     pub fn run(&self) -> Result<()> {
         eprintln!(
-            "mconf: lsp proxy starting (timeout={}ms)",
+            "dprintx: lsp proxy starting (timeout={}ms)",
             READ_TIMEOUT.as_millis()
         );
 
@@ -252,7 +252,7 @@ impl LspProxy {
                     let method_name = method.to_string();
                     let has_id = parsed.get("id").is_some();
                     eprintln!(
-                        "mconf: recv {} ({})",
+                        "dprintx: recv {} ({})",
                         method_name,
                         if has_id { "request" } else { "notification" }
                     );
@@ -266,7 +266,7 @@ impl LspProxy {
                             )
                         {
                             if rewrite_uris {
-                                eprintln!("mconf: track {uri} as {lang_id}");
+                                eprintln!("dprintx: track {uri} as {lang_id}");
                             }
                             uri_languages.insert(uri.to_string(), lang_id.to_string());
                         }
@@ -317,7 +317,7 @@ impl LspProxy {
                                 }
                                 Ok(None) => profile_config,
                                 Err(e) => {
-                                    eprintln!("mconf: warning: build_merged_config failed: {e}");
+                                    eprintln!("dprintx: warning: build_merged_config failed: {e}");
                                     profile_config
                                 }
                             }
@@ -388,7 +388,7 @@ impl LspProxy {
                             match self.read_from_backend(&backends, &effective_config, &stdout) {
                                 Ok(resp) => {
                                     eprintln!(
-                                        "mconf: {} responded in {:?}",
+                                        "dprintx: {} responded in {:?}",
                                         method_name,
                                         t0.elapsed()
                                     );
@@ -396,7 +396,7 @@ impl LspProxy {
                                 }
                                 Err(e) => {
                                     eprintln!(
-                                        "mconf: {} timeout/error in {:?}: {}",
+                                        "dprintx: {} timeout/error in {:?}: {}",
                                         method_name,
                                         t0.elapsed(),
                                         e

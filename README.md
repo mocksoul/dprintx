@@ -1,4 +1,4 @@
-# dprint-mconf
+# dprintx
 
 A wrapper around [dprint](https://dprint.dev/) that adds multi-config support and several missing features.
 
@@ -18,7 +18,7 @@ A wrapper around [dprint](https://dprint.dev/) that adds multi-config support an
 
 ## How it works
 
-Config file: `~/.config/dprint/mconf.jsonc`
+Config file: `~/.config/dprint/dprintx.jsonc`
 
 ```jsonc
 {
@@ -48,8 +48,8 @@ When `diff_pager` is set, `dprint check` produces unified diff output instead of
 - **stdout is pipe/redirect** → raw unified diff
 
 ```bash
-dprint-mconf check              # pretty diff via delta
-dprint-mconf check > fix.patch  # unified diff to file
+dprintx check              # pretty diff via delta
+dprintx check > fix.patch  # unified diff to file
 ```
 
 Without `diff_pager`, `dprint check` behaves exactly like the original dprint.
@@ -60,7 +60,7 @@ Projects can define local formatting rules that override the matched profile.
 
 **How it works:**
 
-1. For each file being formatted, dprint-mconf walks up the directory tree looking for `dprint.json` or `dprint.jsonc`
+1. For each file being formatted, dprintx walks up the directory tree looking for `dprint.json` or `dprint.jsonc`
    (stops at the first one found)
 2. If found, it reads the local config and injects the matched profile path into `extends`
 3. A temporary merged config is written and passed to dprint instead of the profile config
@@ -79,7 +79,7 @@ Since dprint applies `extends` first and then overlays local settings on top, th
 }
 ```
 
-When formatting files under `~/projects/my-app/`, dprint-mconf generates a temporary config equivalent to:
+When formatting files under `~/projects/my-app/`, dprintx generates a temporary config equivalent to:
 
 ```jsonc
 {
@@ -100,7 +100,7 @@ When formatting files under `~/projects/my-app/`, dprint-mconf generates a tempo
 
 The profile path is always prepended so that local settings win.
 
-**Temp file location:** `$XDG_RUNTIME_DIR/dprint-mconf/` (per-user, mode 700). Falls back to `$TMPDIR/dprint-mconf/` if
+**Temp file location:** `$XDG_RUNTIME_DIR/dprintx/` (per-user, mode 700). Falls back to `$TMPDIR/dprintx/` if
 `XDG_RUNTIME_DIR` is unavailable. Files are named `merged-{pid}-{seq}.json` and cleaned up automatically.
 
 If no local config is found, the profile config is used directly — no temp file is created.
@@ -150,30 +150,30 @@ Supported languages:
 
 ```bash
 # stdin — single file, filename is used for config matching (input is read from stdin)
-dprint-mconf fmt --stdin path/to/file.yaml < input.yaml
+dprintx fmt --stdin path/to/file.yaml < input.yaml
 
 # fmt/check — groups files by profile, calls dprint per group
-dprint-mconf fmt
-dprint-mconf check
-dprint-mconf fmt file1.go file2.yaml   # explicit file list
+dprintx fmt
+dprintx check
+dprintx fmt file1.go file2.yaml   # explicit file list
 
 # list all files that would be formatted (merged from all profiles)
-dprint-mconf output-file-paths
+dprintx output-file-paths
 
 # show which config is used
-dprint-mconf config              # all profiles and rules
-dprint-mconf config path/to/file # resolved config for a file
+dprintx config              # all profiles and rules
+dprintx config path/to/file # resolved config for a file
 
 # LSP proxy — spawns dprint lsp per profile, routes by file URI
-dprint-mconf lsp
+dprintx lsp
 ```
 
-`dprint-mconf check` exits with code 1 if any files need formatting.
+`dprintx check` exits with code 1 if any files need formatting.
 
-Use `--mconf <PATH>` to override the config location (default: `~/.config/dprint/mconf.jsonc`):
+Use `--config <PATH>` to override the config location (default: `~/.config/dprint/dprintx.jsonc`):
 
 ```bash
-dprint-mconf --mconf /path/to/custom.jsonc fmt
+dprintx --config /path/to/custom.jsonc fmt
 ```
 
 All unknown commands and flags are passed through to the real dprint (`--help`, `-V`, `license`, `completions`, etc.).
@@ -181,17 +181,17 @@ All unknown commands and flags are passed through to the real dprint (`--help`, 
 ## Install
 
 ```bash
-cargo install --git https://github.com/mocksoul/dprint-mconf
+cargo install --git https://github.com/mocksoul/dprintx
 ```
 
 ### Transparent dprint replacement
 
-Symlink `dprint-mconf` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All
-unknown commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `mconf.jsonc`):
+Symlink `dprintx` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All
+unknown commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `dprintx.jsonc`):
 
 ```bash
-ln -sf ~/.cargo/bin/dprint-mconf ~/.local/bin/dprint
+ln -sf ~/.cargo/bin/dprintx ~/.local/bin/dprint
 ```
 
-Now `dprint fmt`, `dprint check`, `dprint lsp` etc. all go through mconf automatically. No changes needed in editor
+Now `dprint fmt`, `dprint check`, `dprint lsp` etc. all go through dprintx automatically. No changes needed in editor
 configs, CI scripts, or muscle memory.
