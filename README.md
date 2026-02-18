@@ -16,15 +16,15 @@ Config file: `~/.config/dprint/mconf.jsonc`
   "dprint": "~/.cargo/bin/dprint",
   "profiles": {
     "maintainer": "~/.config/dprint/dprint-maintainer.jsonc",
-    "default": "~/.config/dprint/dprint-default.jsonc",
+    "default": "~/.config/dprint/dprint-default.jsonc"
   },
   "match": {
     "**/noc/cmdb/**": "maintainer",
     "**/noc/invapi/**": "maintainer",
-    "**": "default",
+    "**": "default"
   },
   "fallback": "~/.config/dprint/dprint-default.jsonc",
-  "diff_pager": "delta -s",
+  "diff_pager": "delta -s"
 }
 ```
 
@@ -47,12 +47,16 @@ Without `diff_pager`, `dprint check` behaves exactly like the original dprint.
 ## CLI
 
 ```bash
-# stdin — single file, picks config by filename
+# stdin — single file, filename is used for config matching (input is read from stdin)
 dprint fmt --stdin path/to/file.yaml < input.yaml
 
 # fmt/check — groups files by profile, calls dprint per group
 dprint fmt
 dprint check
+dprint fmt file1.go file2.yaml   # explicit file list
+
+# list all files that would be formatted (merged from all profiles)
+dprint output-file-paths
 
 # show which config is used
 dprint config              # all profiles and rules
@@ -60,6 +64,14 @@ dprint config path/to/file # resolved config for a file
 
 # LSP proxy — spawns dprint lsp per profile, routes by file URI
 dprint lsp
+```
+
+`dprint check` exits with code 1 if any files need formatting.
+
+Use `--mconf <PATH>` to override the config location (default: `~/.config/dprint/mconf.jsonc`):
+
+```bash
+dprint --mconf /path/to/custom.jsonc fmt
 ```
 
 All unknown commands and flags are passed through to the real dprint (`--help`, `-V`, `license`, `completions`, etc.).
