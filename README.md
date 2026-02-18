@@ -7,6 +7,8 @@ A wrapper around [dprint](https://dprint.dev/) that adds per-file config profile
 dprint doesn't support per-file config overrides ([#996](https://github.com/dprint/dprint/issues/996)).
 This wrapper selects the right dprint config based on file path using glob rules.
 
+Also adds unified diff output for `dprint check` ([#1092](https://github.com/dprint/dprint/issues/1092)) with optional pager support.
+
 ## How it works
 
 Config file: `~/.config/dprint/mconf.jsonc`
