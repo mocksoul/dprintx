@@ -80,7 +80,7 @@ All unknown commands and flags are passed through to the real dprint (`--help`, 
 ## Install
 
 ```bash
-cargo install --path .
+cargo install --git https://github.com/mocksoul/dprint-mconf
 ```
 
 ### Transparent dprint replacement
