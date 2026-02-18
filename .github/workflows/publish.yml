@@ -14,6 +14,14 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v2
+      - name: Verify tag matches Cargo.toml version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          CARGO="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml)"
+          if [ "$TAG" != "$CARGO" ]; then
+            echo "::error::Tag v$TAG does not match Cargo.toml version $CARGO"
+            exit 1
+          fi
       - run: just check
       - run: cargo publish
         env:
