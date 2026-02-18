@@ -22,6 +22,8 @@ pub enum CliCommand {
     OutputFilePaths,
     /// Start LSP server.
     Lsp,
+    /// Generate shell completions (patched with dprintx extras).
+    Completions { shell: String },
     /// Passthrough to real dprint (unknown command or --help etc).
     Passthrough { args: Vec<String> },
 }
@@ -75,6 +77,9 @@ impl Cli {
             },
             "output-file-paths" => CliCommand::OutputFilePaths,
             "lsp" => CliCommand::Lsp,
+            "completions" => CliCommand::Completions {
+                shell: sub_args.first().cloned().unwrap_or_else(|| "zsh".into()),
+            },
             // Everything else: --help, -h, --version, -V, license, completions, etc.
             _ => CliCommand::Passthrough { args: rest },
         };

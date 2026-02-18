@@ -35,11 +35,19 @@ fn main() -> Result<()> {
         std::process::exit(status.code().unwrap_or(1));
     };
 
-    // For passthrough commands, we don't need matcher.
-    if let CliCommand::Passthrough { ref args } = cli.command {
-        let runner = DprintRunner::new(&config);
-        runner.passthrough_raw(args)?;
-        return Ok(());
+    // Commands that don't need matcher.
+    match &cli.command {
+        CliCommand::Passthrough { args } => {
+            let runner = DprintRunner::new(&config);
+            runner.passthrough_raw(args)?;
+            return Ok(());
+        }
+        CliCommand::Completions { shell } => {
+            let runner = DprintRunner::new(&config);
+            runner.completions(shell)?;
+            return Ok(());
+        }
+        _ => {}
     }
 
     let matcher = ProfileMatcher::from_config(&config)?;
@@ -72,7 +80,7 @@ fn main() -> Result<()> {
             let proxy = lsp::LspProxy::new(config.dprint_path(), matcher, config);
             proxy.run()?;
         }
-        CliCommand::Passthrough { .. } => unreachable!(),
+        CliCommand::Completions { .. } | CliCommand::Passthrough { .. } => unreachable!(),
     }
 
     Ok(())

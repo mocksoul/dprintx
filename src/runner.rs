@@ -145,6 +145,47 @@ impl DprintRunner {
         Ok(())
     }
 
+    /// Generate shell completions, patching dprint's output with dprintx extras.
+    pub fn completions(&self, shell: &str) -> Result<()> {
+        let output = Command::new(&self.dprint_bin)
+            .args(["completions", shell])
+            .output()
+            .context("running dprint completions")?;
+
+        if !output.status.success() {
+            io::stderr().write_all(&output.stderr)?;
+            std::process::exit(output.status.code().unwrap_or(1));
+        }
+
+        let script = String::from_utf8_lossy(&output.stdout);
+
+        // Patch the completions:
+        let patched = script
+            // 1. Fix file completion (add _files action to empty file args).
+            .replace(
+                "in the config file.:'",
+                "in the config file.:_files'",
+            )
+            // 2. Update config subcommand description.
+            .replace(
+                "'config:Functionality related to the configuration file.'",
+                "'config:Show resolved dprintx profiles and match rules.'",
+            )
+            // 3. Update --config description.
+            .replace(
+                "Path or url to JSON configuration file. Defaults to dprint.json(c) or .dprint.json(c) in current or ancestor directory when not provided.",
+                "Override dprintx config path (default: ~/.config/dprint/dprintx.jsonc).",
+            )
+            // 4. Update lsp description.
+            .replace(
+                "'lsp:Starts up a language server for formatting files.'",
+                "'lsp:Start LSP server with dprintx multi-profile support and URI rewriting.'",
+            );
+
+        io::stdout().write_all(patched.as_bytes())?;
+        Ok(())
+    }
+
     /// Passthrough raw args to real dprint (unknown commands, --help, etc).
     /// For --help/-h: capture output and append dprintx section.
     pub fn passthrough_raw(&self, args: &[String]) -> Result<()> {
