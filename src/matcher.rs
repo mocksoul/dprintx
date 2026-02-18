@@ -45,20 +45,23 @@ impl ProfileMatcher {
 
     /// Resolve file path to dprint config path.
     ///
-    /// Logic:
-    /// 1. Match file against rules → get profile name → resolve to config path
-    /// 2. If no rule matches → use fallback config
-    pub fn resolve_config(&self, file_path: &Path, config: &MconfConfig) -> Result<PathBuf> {
+    /// Returns None if no match rule applies (file is skipped).
+    /// Errors if a matched profile name is not defined in profiles.
+    pub fn resolve_config(
+        &self,
+        file_path: &Path,
+        config: &MconfConfig,
+    ) -> Result<Option<PathBuf>> {
         if let Some(profile_name) = self.match_profile(file_path) {
             if let Some(config_path) = config.profile_config_path(profile_name) {
-                return Ok(config_path);
+                return Ok(Some(config_path));
             }
             bail!(
                 "profile '{}' referenced in match rules but not defined in profiles",
                 profile_name
             );
         }
-        Ok(config.fallback_path())
+        Ok(None)
     }
 }
 
@@ -78,8 +81,7 @@ mod tests {
                 "**/noc/invapi/**": "maintainer",
                 "**/mocksoul/gostern/**": "maintainer",
                 "**": "default"
-            },
-            "fallback": "/config/dprint-default.jsonc"
+            }
         }"#;
         serde_json::from_str(config_json).unwrap()
     }
@@ -108,8 +110,7 @@ mod tests {
         let config_json = r#"{
             "dprint": "/usr/bin/dprint",
             "profiles": { "strict": "/config/strict.jsonc" },
-            "match": { "**/noc/cmdb/**": "strict" },
-            "fallback": "/config/default.jsonc"
+            "match": { "**/noc/cmdb/**": "strict" }
         }"#;
         let config: MconfConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
@@ -129,16 +130,18 @@ mod tests {
         let result = matcher
             .resolve_config(Path::new("/workspace/noc/cmdb/main.go"), &config)
             .unwrap();
-        assert_eq!(result, PathBuf::from("/config/dprint-maintainer.jsonc"));
+        assert_eq!(
+            result,
+            Some(PathBuf::from("/config/dprint-maintainer.jsonc"))
+        );
     }
 
     #[test]
-    fn test_resolve_config_fallback() {
+    fn test_resolve_config_no_match() {
         let config_json = r#"{
             "dprint": "/usr/bin/dprint",
             "profiles": { "strict": "/config/strict.jsonc" },
-            "match": { "**/noc/cmdb/**": "strict" },
-            "fallback": "/config/default.jsonc"
+            "match": { "**/noc/cmdb/**": "strict" }
         }"#;
         let config: MconfConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();
@@ -146,7 +149,7 @@ mod tests {
         let result = matcher
             .resolve_config(Path::new("/other/file.go"), &config)
             .unwrap();
-        assert_eq!(result, PathBuf::from("/config/default.jsonc"));
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -154,8 +157,7 @@ mod tests {
         let config_json = r#"{
             "dprint": "/usr/bin/dprint",
             "profiles": {},
-            "match": { "**": "nonexistent" },
-            "fallback": "/config/default.jsonc"
+            "match": { "**": "nonexistent" }
         }"#;
         let config: MconfConfig = serde_json::from_str(config_json).unwrap();
         let matcher = ProfileMatcher::from_config(&config).unwrap();

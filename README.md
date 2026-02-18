@@ -23,12 +23,11 @@ Config file: `~/.config/dprint/mconf.jsonc`
     "**/noc/invapi/**": "maintainer",
     "**": "default"
   },
-  "fallback": "~/.config/dprint/dprint-default.jsonc",
   "diff_pager": "delta -s"
 }
 ```
 
-Rules in `match` are evaluated top-to-bottom, first match wins.
+Rules in `match` are evaluated top-to-bottom, first match wins. Files not matching any rule are skipped. Use `"**": "profile"` as a catch-all.
 
 ### diff_pager
 

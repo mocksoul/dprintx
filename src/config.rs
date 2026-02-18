@@ -18,7 +18,6 @@ use std::path::{Path, PathBuf};
 ///     "**/noc/invapi/**": "maintainer",
 ///     "**": "default",
 ///   },
-///   "fallback": "~/.config/dprint/dprint-default.jsonc",
 /// }
 /// ```
 #[derive(Debug, Deserialize)]
@@ -33,9 +32,6 @@ pub struct MconfConfig {
     /// Uses serde_json::Map with preserve_order for first-match semantics.
     #[serde(rename = "match")]
     pub match_rules: Map<String, serde_json::Value>,
-
-    /// Fallback config path when no match rule applies and no local dprint.json exists.
-    pub fallback: String,
 
     /// Optional diff pager command for `dprint check` (e.g. "delta -s").
     /// When set, check produces unified diff output:
@@ -77,11 +73,6 @@ impl MconfConfig {
         self.profiles
             .get(profile_name)
             .and_then(|v| v.as_str().map(|s| expand_tilde(s)))
-    }
-
-    /// Resolve fallback config path (expand ~).
-    pub fn fallback_path(&self) -> PathBuf {
-        expand_tilde(&self.fallback)
     }
 
     /// Get ordered match rules as (glob_pattern, profile_name) pairs.
@@ -262,14 +253,12 @@ mod tests {
     /* catch-all */
     "**": "default",
   },
-  "fallback": "~/.config/dprint/dprint-default.jsonc",
 }"#;
         let json = strip_jsonc_comments(input);
         let config: MconfConfig = serde_json::from_str(&json).unwrap();
 
         assert_eq!(config.dprint, "~/.cargo/bin/dprint");
         assert_eq!(config.profiles.len(), 2);
-        assert_eq!(config.fallback, "~/.config/dprint/dprint-default.jsonc");
 
         // Verify match rules preserve order (first match semantics).
         let rules: Vec<(&str, &str)> = config.match_rules_iter().collect();

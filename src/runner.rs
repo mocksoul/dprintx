@@ -33,6 +33,16 @@ impl DprintRunner {
             .resolve_config(&abs_path, config)
             .with_context(|| format!("resolving config for {filename}"))?;
 
+        let Some(config_path) = config_path else {
+            // No profile matched — pass through stdin unchanged.
+            let mut input = Vec::new();
+            io::stdin()
+                .read_to_end(&mut input)
+                .context("reading stdin")?;
+            io::stdout().write_all(&input)?;
+            return Ok(());
+        };
+
         // Read all stdin.
         let mut input = Vec::new();
         io::stdin()
@@ -103,7 +113,7 @@ impl DprintRunner {
                 let file_list = String::from_utf8_lossy(&output.stdout);
                 for line in file_list.lines() {
                     let resolved = matcher.resolve_config(std::path::Path::new(line), config);
-                    if let Ok(ref p) = resolved {
+                    if let Ok(Some(ref p)) = resolved {
                         if p == profile_config {
                             all_files.insert(line.to_string());
                         }
@@ -180,7 +190,9 @@ impl DprintRunner {
             let config_path = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
-            groups.entry(config_path).or_default().push(file);
+            if let Some(config_path) = config_path {
+                groups.entry(config_path).or_default().push(file);
+            }
         }
 
         // Run dprint once per group.
@@ -241,9 +253,6 @@ impl DprintRunner {
             }
         }
 
-        // Also include fallback if it's not already covered.
-        let fallback = config.fallback_path();
-
         for (profile_name, profile_config) in &profile_configs {
             // Get file list from dprint for this profile.
             let output = Command::new(&self.dprint_bin)
@@ -271,8 +280,8 @@ impl DprintRunner {
                     // Only include files that match this profile.
                     let resolved = matcher.resolve_config(std::path::Path::new(line), config);
                     match resolved {
-                        Ok(ref p) => p == profile_config,
-                        Err(_) => false,
+                        Ok(Some(ref p)) => p == profile_config,
+                        _ => false,
                     }
                 })
                 .collect();
@@ -293,27 +302,6 @@ impl DprintRunner {
                     profile_config.display()
                 )
             })?;
-
-            if !status.success() {
-                failed = true;
-            }
-        }
-
-        // Handle fallback files — files not matched by any profile rule.
-        // These would be handled by the fallback config.
-        // For now, run dprint with fallback config (it will pick up its own includes).
-        if !profile_configs.iter().any(|(_, p)| *p == fallback) {
-            let status = Command::new(&self.dprint_bin)
-                .arg(subcmd)
-                .arg("--config")
-                .arg(&fallback)
-                .status()
-                .with_context(|| {
-                    format!(
-                        "running dprint {subcmd} --config {} (fallback)",
-                        fallback.display()
-                    )
-                })?;
 
             if !status.success() {
                 failed = true;
@@ -347,7 +335,9 @@ impl DprintRunner {
             let config_path = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
-            groups.entry(config_path).or_default().push(file);
+            if let Some(config_path) = config_path {
+                groups.entry(config_path).or_default().push(file);
+            }
         }
 
         let mut failed = false;
@@ -396,10 +386,9 @@ impl DprintRunner {
             for file in &changed {
                 // Filter: only files that belong to this profile.
                 let resolved = matcher.resolve_config(std::path::Path::new(file), config);
-                if let Ok(ref p) = resolved {
-                    if p != profile_config {
-                        continue;
-                    }
+                match resolved {
+                    Ok(Some(ref p)) if p == profile_config => {}
+                    _ => continue,
                 }
                 if let Some(diff) = self.unified_diff_for_file(file, profile_config)? {
                     all_diff.push_str(&diff);
@@ -424,6 +413,10 @@ impl DprintRunner {
             let config_path = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
+
+            let Some(config_path) = config_path else {
+                continue; // No profile matched — skip.
+            };
 
             if let Some(diff) = self.unified_diff_for_file(file, &config_path)? {
                 all_diff.push_str(&diff);

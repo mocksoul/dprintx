@@ -188,10 +188,25 @@ impl LspProxy {
                     );
                     if let Some(uri) = uri {
                         let file_path = uri_to_path(&uri);
-                        let config_path = self
-                            .matcher
-                            .resolve_config(&file_path, &self.config)
-                            .unwrap_or_else(|_| self.config.fallback_path());
+                        let config_path =
+                            match self.matcher.resolve_config(&file_path, &self.config) {
+                                Ok(Some(p)) => p,
+                                _ => {
+                                    // No profile matched — respond with null result if it's a request.
+                                    if let Some(id) = parsed.get("id").cloned() {
+                                        let null_resp = serde_json::json!({
+                                            "jsonrpc": "2.0",
+                                            "id": id,
+                                            "result": null,
+                                        });
+                                        write_lsp_message(
+                                            &stdout,
+                                            &serde_json::to_string(&null_resp)?,
+                                        )?;
+                                    }
+                                    continue;
+                                }
+                            };
 
                         // Ensure backend is spawned.
                         {

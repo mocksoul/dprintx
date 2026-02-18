@@ -76,11 +76,13 @@ fn cmd_config(matcher: &ProfileMatcher, config: &MconfConfig, file: Option<&str>
             let config_path = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {f}"))?;
-            println!("{}", config_path.display());
+            match config_path {
+                Some(p) => println!("{}", p.display()),
+                None => println!("(no matching profile)"),
+            }
         }
         None => {
             println!("dprint: {}", config.dprint_path().display());
-            println!("fallback: {}", config.fallback_path().display());
             println!("profiles:");
             for (name, value) in &config.profiles {
                 if let Some(path) = value.as_str() {
