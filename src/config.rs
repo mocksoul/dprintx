@@ -42,11 +42,16 @@ pub struct MconfConfig {
 }
 
 impl MconfConfig {
-    /// Load config from the default location (~/.config/dprint/mconf.jsonc).
-    pub fn load_default() -> Result<Self> {
+    /// Try to load config from the default location (~/.config/dprint/mconf.jsonc).
+    /// Returns Ok(None) if the file doesn't exist.
+    /// Returns Err if the file exists but is invalid.
+    pub fn try_load_default() -> Result<Option<Self>> {
         let config_dir = dirs::config_dir().context("cannot determine config directory")?;
         let path = config_dir.join("dprint").join("mconf.jsonc");
-        Self::load(&path)
+        if !path.exists() {
+            return Ok(None);
+        }
+        Self::load(&path).map(Some)
     }
 
     /// Load config from a specific path.

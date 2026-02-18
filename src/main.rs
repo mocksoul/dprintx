@@ -13,18 +13,35 @@ use matcher::ProfileMatcher;
 use runner::DprintRunner;
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    // Prevent infinite recursion when symlinked as `dprint` with no config.
+    if std::env::var("DPRINT_MCONF_ACTIVE").is_ok() {
+        anyhow::bail!(
+            "dprint-mconf: recursive call detected — \
+             create ~/.config/dprint/mconf.jsonc or ensure the real dprint is in PATH"
+        );
+    }
 
-    // For passthrough commands, we don't need mconf config at all.
+    let cli = Cli::parse();
+    let config = load_config(cli.mconf.as_deref())?;
+
+    // No config — passthrough everything to dprint.
+    let Some(config) = config else {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let status = std::process::Command::new("dprint")
+            .env("DPRINT_MCONF_ACTIVE", "1")
+            .args(&args)
+            .status()
+            .context("cannot run dprint (no mconf config, falling back to dprint in PATH)")?;
+        std::process::exit(status.code().unwrap_or(1));
+    };
+
+    // For passthrough commands, we don't need matcher.
     if let CliCommand::Passthrough { ref args } = cli.command {
-        // Load config just to get the dprint binary path.
-        let config = load_config(cli.mconf.as_deref())?;
         let runner = DprintRunner::new(&config);
         runner.passthrough_raw(args)?;
         return Ok(());
     }
 
-    let config = load_config(cli.mconf.as_deref())?;
     let matcher = ProfileMatcher::from_config(&config)?;
     let runner = DprintRunner::new(&config);
 
@@ -61,10 +78,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_config(mconf_path: Option<&str>) -> Result<MconfConfig> {
+fn load_config(mconf_path: Option<&str>) -> Result<Option<MconfConfig>> {
     match mconf_path {
-        Some(path) => MconfConfig::load(Path::new(path)),
-        None => MconfConfig::load_default(),
+        // Explicit --mconf path: must exist and be valid.
+        Some(path) => MconfConfig::load(Path::new(path)).map(Some),
+        // Default path: None if file doesn't exist, error if invalid.
+        None => MconfConfig::try_load_default(),
     }
 }
 
