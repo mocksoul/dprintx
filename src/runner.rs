@@ -103,10 +103,10 @@ impl DprintRunner {
         let mut profile_configs: Vec<std::path::PathBuf> = Vec::new();
 
         for (_pattern, profile_name) in config.match_rules_iter() {
-            if let Some(config_path) = config.profile_config_path(profile_name) {
-                if seen.insert(config_path.clone()) {
-                    profile_configs.push(config_path);
-                }
+            if let Some(config_path) = config.profile_config_path(profile_name)
+                && seen.insert(config_path.clone())
+            {
+                profile_configs.push(config_path);
             }
         }
 
@@ -125,10 +125,10 @@ impl DprintRunner {
                 let file_list = String::from_utf8_lossy(&output.stdout);
                 for line in file_list.lines() {
                     let resolved = matcher.resolve_config(std::path::Path::new(line), config);
-                    if let Ok(Some(ref p)) = resolved {
-                        if p == profile_config {
-                            all_files.insert(line.to_string());
-                        }
+                    if let Ok(Some(ref p)) = resolved
+                        && p == profile_config
+                    {
+                        all_files.insert(line.to_string());
                     }
                 }
             }
@@ -272,10 +272,10 @@ impl DprintRunner {
         let mut profile_configs: Vec<(String, std::path::PathBuf)> = Vec::new();
 
         for (_pattern, profile_name) in config.match_rules_iter() {
-            if seen.insert(profile_name.to_string()) {
-                if let Some(config_path) = config.profile_config_path(profile_name) {
-                    profile_configs.push((profile_name.to_string(), config_path));
-                }
+            if seen.insert(profile_name.to_string())
+                && let Some(config_path) = config.profile_config_path(profile_name)
+            {
+                profile_configs.push((profile_name.to_string(), config_path));
             }
         }
 
@@ -437,10 +437,10 @@ impl DprintRunner {
         let mut seen = std::collections::HashSet::new();
         let mut profile_configs: Vec<PathBuf> = Vec::new();
         for (_pattern, profile_name) in config.match_rules_iter() {
-            if seen.insert(profile_name.to_string()) {
-                if let Some(config_path) = config.profile_config_path(profile_name) {
-                    profile_configs.push(config_path);
-                }
+            if seen.insert(profile_name.to_string())
+                && let Some(config_path) = config.profile_config_path(profile_name)
+            {
+                profile_configs.push(config_path);
             }
         }
 

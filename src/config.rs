@@ -98,7 +98,7 @@ impl MconfConfig {
     pub fn profile_config_path(&self, profile_name: &str) -> Option<PathBuf> {
         self.profiles
             .get(profile_name)
-            .and_then(|v| v.as_str().map(|s| expand_tilde(s)))
+            .and_then(|v| v.as_str().map(expand_tilde))
     }
 
     /// Get ordered match rules as (glob_pattern, profile_name) pairs.
@@ -232,10 +232,10 @@ fn merged_config_dir() -> Result<PathBuf> {
 
 /// Expand ~ to home directory in a path string.
 pub fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     PathBuf::from(path)
 }

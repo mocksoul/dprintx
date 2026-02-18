@@ -84,11 +84,11 @@ impl LspProxy {
                     let mut profile_configs = Vec::new();
                     let mut seen = std::collections::HashSet::new();
                     for (_pattern, profile_name) in self.config.match_rules_iter() {
-                        if seen.insert(profile_name.to_string()) {
-                            if let Some(config_path) = self.config.profile_config_path(profile_name)
-                            {
-                                profile_configs.push(config_path);
-                            }
+                        if seen.insert(profile_name.to_string())
+                            && let Some(config_path) =
+                                self.config.profile_config_path(profile_name)
+                        {
+                            profile_configs.push(config_path);
                         }
                     }
 
@@ -121,10 +121,10 @@ impl LspProxy {
                         self.send_to_backend(&backends, config_path, &init_msg)?;
 
                         // Read response from this backend.
-                        if let Ok(resp) = self.read_from_backend(&backends, config_path, &stdout) {
-                            if first_response.is_none() {
-                                first_response = Some(resp);
-                            }
+                        if let Ok(resp) = self.read_from_backend(&backends, config_path, &stdout)
+                            && first_response.is_none()
+                        {
+                            first_response = Some(resp);
                         }
                     }
 
@@ -332,23 +332,23 @@ impl LspProxy {
                     }
 
                     // If it's a request, respond from first backend.
-                    if let Some(id) = parsed.get("id").cloned() {
-                        if let Some(config_path) = keys.first() {
-                            match self.read_from_backend(&backends, config_path, &stdout) {
-                                Ok(resp) => {
-                                    write_lsp_message(&stdout, &resp)?;
-                                }
-                                Err(_) => {
-                                    let error_resp = serde_json::json!({
-                                        "jsonrpc": "2.0",
-                                        "id": id,
-                                        "result": null,
-                                    });
-                                    write_lsp_message(
-                                        &stdout,
-                                        &serde_json::to_string(&error_resp)?,
-                                    )?;
-                                }
+                    if let Some(id) = parsed.get("id").cloned()
+                        && let Some(config_path) = keys.first()
+                    {
+                        match self.read_from_backend(&backends, config_path, &stdout) {
+                            Ok(resp) => {
+                                write_lsp_message(&stdout, &resp)?;
+                            }
+                            Err(_) => {
+                                let error_resp = serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": id,
+                                    "result": null,
+                                });
+                                write_lsp_message(
+                                    &stdout,
+                                    &serde_json::to_string(&error_resp)?,
+                                )?;
                             }
                         }
                     }
@@ -376,14 +376,9 @@ impl LspProxy {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let mut reader = BufReader::new(child_stdout);
-            loop {
-                match read_lsp_message(&mut reader) {
-                    Ok(msg) => {
-                        if tx.send(msg).is_err() {
-                            break; // Receiver dropped.
-                        }
-                    }
-                    Err(_) => break, // EOF or error.
+            while let Ok(msg) = read_lsp_message(&mut reader) {
+                if tx.send(msg).is_err() {
+                    break; // Receiver dropped.
                 }
             }
         });
@@ -517,12 +512,13 @@ fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                result.push(byte as char);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16)
+        {
+            result.push(byte as char);
+            i += 3;
+            continue;
         }
         result.push(bytes[i] as char);
         i += 1;
