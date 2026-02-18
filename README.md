@@ -4,10 +4,11 @@ A wrapper around [dprint](https://dprint.dev/) that adds per-file config profile
 
 ## Why?
 
-dprint doesn't support per-file config overrides ([#996](https://github.com/dprint/dprint/issues/996)).
-This wrapper selects the right dprint config based on file path using glob rules.
+dprint doesn't support per-file config overrides ([#996](https://github.com/dprint/dprint/issues/996)). This wrapper
+selects the right dprint config based on file path using glob rules.
 
-Also adds unified diff output for `dprint check` ([#1092](https://github.com/dprint/dprint/issues/1092)) with optional pager support.
+Also adds unified diff output for `dprint check` ([#1092](https://github.com/dprint/dprint/issues/1092)) with optional
+pager support.
 
 ## How it works
 
@@ -25,11 +26,13 @@ Config file: `~/.config/dprint/mconf.jsonc`
     "**/noc/invapi/**": "maintainer",
     "**": "default"
   },
-  "diff_pager": "delta -s"
+  "diff_pager": "delta -s",
+  "lsp_rewrite_uris": true
 }
 ```
 
-Rules in `match` are evaluated top-to-bottom, first match wins. Files not matching any rule are skipped. Use `"**": "profile"` as a catch-all.
+Rules in `match` are evaluated top-to-bottom, first match wins. Files not matching any rule are skipped. Use
+`"**": "profile"` as a catch-all.
 
 ### diff_pager
 
@@ -51,7 +54,8 @@ Projects can define local formatting rules that override the matched profile.
 
 **How it works:**
 
-1. For each file being formatted, dprint-mconf walks up the directory tree looking for `dprint.json` or `dprint.jsonc` (stops at the first one found)
+1. For each file being formatted, dprint-mconf walks up the directory tree looking for `dprint.json` or `dprint.jsonc`
+   (stops at the first one found)
 2. If found, it reads the local config and injects the matched profile path into `extends`
 3. A temporary merged config is written and passed to dprint instead of the profile config
 4. The temp file is auto-deleted when the command finishes (RAII guard)
@@ -90,9 +94,51 @@ When formatting files under `~/projects/my-app/`, dprint-mconf generates a tempo
 
 The profile path is always prepended so that local settings win.
 
-**Temp file location:** `$XDG_RUNTIME_DIR/dprint-mconf/` (per-user, mode 700). Falls back to `$TMPDIR/dprint-mconf/` if `XDG_RUNTIME_DIR` is unavailable. Files are named `merged-{pid}-{seq}.json` and cleaned up automatically.
+**Temp file location:** `$XDG_RUNTIME_DIR/dprint-mconf/` (per-user, mode 700). Falls back to `$TMPDIR/dprint-mconf/` if
+`XDG_RUNTIME_DIR` is unavailable. Files are named `merged-{pid}-{seq}.json` and cleaned up automatically.
 
 If no local config is found, the profile config is used directly — no temp file is created.
+
+### LSP URI rewriting
+
+dprint matches files by extension, so extensionless files (e.g. shell scripts named `myscript`, Lua scripts without
+`.lua`) are silently skipped during LSP formatting.
+
+When `lsp_rewrite_uris` is enabled, the proxy tracks `languageId` from `textDocument/didOpen` and rewrites URIs
+forwarded to the dprint backend by appending the correct extension (e.g. `file:///path/myscript` →
+`file:///path/myscript.sh` for `languageId=sh`). If the file already has the correct extension, no rewrite happens.
+
+```jsonc
+{
+  "lsp_rewrite_uris": true
+}
+```
+
+Default: `false` (transparent passthrough).
+
+Supported languages:
+
+| languageId      | Extension   |
+| --------------- | ----------- |
+| go              | .go         |
+| lua             | .lua        |
+| json            | .json       |
+| jsonc           | .jsonc      |
+| yaml            | .yaml       |
+| markdown        | .md         |
+| python          | .py         |
+| rust            | .rs         |
+| typescript      | .ts         |
+| typescriptreact | .tsx        |
+| javascript      | .js         |
+| javascriptreact | .jsx        |
+| sh / bash / zsh | .sh         |
+| toml            | .toml       |
+| css             | .css        |
+| html            | .html       |
+| sql             | .sql        |
+| dockerfile      | .Dockerfile |
+| graphql         | .graphql    |
 
 ## CLI
 
@@ -134,10 +180,12 @@ cargo install --git https://github.com/mocksoul/dprint-mconf
 
 ### Transparent dprint replacement
 
-Symlink `dprint-mconf` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All unknown commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `mconf.jsonc`):
+Symlink `dprint-mconf` as `dprint` earlier in your `PATH` — it becomes a fully transparent drop-in replacement. All
+unknown commands and flags are forwarded to the real dprint binary (configured via `"dprint"` in `mconf.jsonc`):
 
 ```bash
 ln -sf ~/.cargo/bin/dprint-mconf ~/.local/bin/dprint
 ```
 
-Now `dprint fmt`, `dprint check`, `dprint lsp` etc. all go through mconf automatically. No changes needed in editor configs, CI scripts, or muscle memory.
+Now `dprint fmt`, `dprint check`, `dprint lsp` etc. all go through mconf automatically. No changes needed in editor
+configs, CI scripts, or muscle memory.

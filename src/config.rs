@@ -60,6 +60,14 @@ pub struct MconfConfig {
     /// - stdout is pipe/redirect → raw unified diff
     #[serde(default)]
     pub diff_pager: Option<String>,
+
+    /// Rewrite file URIs in LSP based on editor's languageId.
+    /// When true, the proxy appends the correct file extension to URIs
+    /// forwarded to dprint, so files without extensions (or with wrong ones)
+    /// get formatted according to the editor's filetype detection.
+    /// Default: false (transparent passthrough).
+    #[serde(default)]
+    pub lsp_rewrite_uris: bool,
 }
 
 impl MconfConfig {

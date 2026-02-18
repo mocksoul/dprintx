@@ -13,6 +13,72 @@ use crate::matcher::ProfileMatcher;
 /// Timeout for reading LSP responses from backends.
 const READ_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Map LSP languageId to file extension (without dot).
+/// Used to rewrite URIs so dprint can match files by extension
+/// even when the original file has no extension or a different one.
+fn language_ext(language_id: &str) -> Option<&'static str> {
+    Some(match language_id {
+        "go" => "go",
+        "lua" => "lua",
+        "json" => "json",
+        "jsonc" => "jsonc",
+        "yaml" => "yaml",
+        "markdown" => "md",
+        "python" => "py",
+        "rust" => "rs",
+        "typescript" => "ts",
+        "typescriptreact" => "tsx",
+        "javascript" => "js",
+        "javascriptreact" => "jsx",
+        "sh" | "bash" | "zsh" => "sh",
+        "toml" => "toml",
+        "css" => "css",
+        "html" => "html",
+        "sql" => "sql",
+        "dockerfile" => "Dockerfile",
+        "graphql" => "graphql",
+        _ => return None,
+    })
+}
+
+/// Rewrite a file URI to have the correct extension based on languageId.
+/// If the file already has the right extension, returns None (no rewrite needed).
+/// Otherwise appends `.{ext}` to the URI so dprint can match it.
+fn rewrite_uri(uri: &str, language_id: &str) -> Option<String> {
+    let ext = language_ext(language_id)?;
+    let path = uri_to_path(uri);
+
+    // Check if file already has the correct extension.
+    if let Some(file_ext) = path.extension()
+        && file_ext.to_str() == Some(ext)
+    {
+        return None; // Already correct.
+    }
+
+    // Append extension to URI: file:///path/to/some -> file:///path/to/some.sh
+    Some(format!("{uri}.{ext}"))
+}
+
+/// Apply URI rewriting to an LSP message based on the language map.
+/// Modifies params.textDocument.uri in-place if a rewrite is needed.
+fn apply_uri_rewrite(msg: &mut serde_json::Value, uri_languages: &HashMap<String, String>) {
+    let uri = match msg
+        .get("params")
+        .and_then(|p| p.get("textDocument"))
+        .and_then(|td| td.get("uri"))
+        .and_then(|u| u.as_str())
+    {
+        Some(u) => u.to_string(),
+        None => return,
+    };
+
+    if let Some(lang_id) = uri_languages.get(&uri)
+        && let Some(new_uri) = rewrite_uri(&uri, lang_id)
+    {
+        msg["params"]["textDocument"]["uri"] = serde_json::Value::String(new_uri);
+    }
+}
+
 /// LSP proxy: spawns dprint lsp per profile, routes requests by file URI.
 pub struct LspProxy {
     dprint_bin: PathBuf,
@@ -57,6 +123,9 @@ impl LspProxy {
         let mut last_init_params: Option<serde_json::Value> = None;
         // Hold merged config guards alive for the lifetime of LSP backends.
         let mut _merged_guards: Vec<config::TempConfig> = Vec::new();
+        // Track URI -> languageId from textDocument/didOpen for URI rewriting.
+        let mut uri_languages: HashMap<String, String> = HashMap::new();
+        let rewrite_uris = self.config.lsp_rewrite_uris;
 
         loop {
             // Read LSP message (Content-Length header + body).
@@ -180,8 +249,6 @@ impl LspProxy {
                 }
 
                 Some(method) if method.starts_with("textDocument/") => {
-                    // Route by file URI.
-                    let uri = extract_uri(&parsed);
                     let method_name = method.to_string();
                     let has_id = parsed.get("id").is_some();
                     eprintln!(
@@ -189,6 +256,35 @@ impl LspProxy {
                         method_name,
                         if has_id { "request" } else { "notification" }
                     );
+
+                    // Track languageId from didOpen, clean up on didClose.
+                    if method_name == "textDocument/didOpen" {
+                        if let Some(td) = parsed.get("params").and_then(|p| p.get("textDocument"))
+                            && let (Some(uri), Some(lang_id)) = (
+                                td.get("uri").and_then(|u| u.as_str()),
+                                td.get("languageId").and_then(|l| l.as_str()),
+                            )
+                        {
+                            if rewrite_uris {
+                                eprintln!("mconf: track {uri} as {lang_id}");
+                            }
+                            uri_languages.insert(uri.to_string(), lang_id.to_string());
+                        }
+                    } else if method_name == "textDocument/didClose"
+                        && let Some(uri) = extract_uri(&parsed)
+                    {
+                        uri_languages.remove(&uri);
+                    }
+
+                    // Clone and optionally rewrite URI based on languageId.
+                    let mut msg = parsed.clone();
+                    let original_uri = extract_uri(&parsed);
+                    if rewrite_uris {
+                        apply_uri_rewrite(&mut msg, &uri_languages);
+                    }
+                    // Use rewritten URI for routing, fall back to original.
+                    let uri = extract_uri(&msg).or(original_uri);
+
                     if let Some(uri) = uri {
                         let file_path = uri_to_path(&uri);
                         let profile_config =
@@ -283,8 +379,8 @@ impl LspProxy {
                             }
                         }
 
-                        // Send request to the right backend.
-                        self.send_to_backend(&backends, &effective_config, &parsed)?;
+                        // Send request to the right backend (with rewritten URI if enabled).
+                        self.send_to_backend(&backends, &effective_config, &msg)?;
 
                         // If it's a request (has id), read response.
                         if let Some(id) = parsed.get("id").cloned() {
@@ -560,5 +656,111 @@ mod tests {
             "method": "shutdown"
         });
         assert_eq!(extract_uri(&msg), None);
+    }
+
+    #[test]
+    fn test_language_ext() {
+        assert_eq!(language_ext("go"), Some("go"));
+        assert_eq!(language_ext("lua"), Some("lua"));
+        assert_eq!(language_ext("sh"), Some("sh"));
+        assert_eq!(language_ext("bash"), Some("sh"));
+        assert_eq!(language_ext("zsh"), Some("sh"));
+        assert_eq!(language_ext("markdown"), Some("md"));
+        assert_eq!(language_ext("python"), Some("py"));
+        assert_eq!(language_ext("rust"), Some("rs"));
+        assert_eq!(language_ext("unknown_lang_xyz"), None);
+    }
+
+    #[test]
+    fn test_rewrite_uri_no_extension() {
+        // File without extension + known languageId → append .sh
+        assert_eq!(
+            rewrite_uri("file:///home/user/myscript", "sh"),
+            Some("file:///home/user/myscript.sh".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uri_correct_extension() {
+        // File already has correct extension → no rewrite
+        assert_eq!(rewrite_uri("file:///home/user/main.go", "go"), None);
+    }
+
+    #[test]
+    fn test_rewrite_uri_wrong_extension() {
+        // File has .py extension but editor says sh → rewrite
+        assert_eq!(
+            rewrite_uri("file:///home/user/script.py", "sh"),
+            Some("file:///home/user/script.py.sh".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_uri_unknown_language() {
+        // Unknown languageId → no rewrite
+        assert_eq!(
+            rewrite_uri("file:///home/user/file.xyz", "unknown_lang"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_apply_uri_rewrite() {
+        let mut uri_languages = HashMap::new();
+        uri_languages.insert("file:///home/user/myscript".to_string(), "sh".to_string());
+
+        let mut msg = serde_json::json!({
+            "method": "textDocument/formatting",
+            "params": {
+                "textDocument": {
+                    "uri": "file:///home/user/myscript"
+                }
+            }
+        });
+
+        apply_uri_rewrite(&mut msg, &uri_languages);
+        assert_eq!(
+            msg["params"]["textDocument"]["uri"],
+            "file:///home/user/myscript.sh"
+        );
+    }
+
+    #[test]
+    fn test_apply_uri_rewrite_no_match() {
+        let uri_languages = HashMap::new(); // empty map
+
+        let mut msg = serde_json::json!({
+            "method": "textDocument/formatting",
+            "params": {
+                "textDocument": {
+                    "uri": "file:///home/user/myscript"
+                }
+            }
+        });
+
+        let original = msg.clone();
+        apply_uri_rewrite(&mut msg, &uri_languages);
+        // No rewrite — message unchanged.
+        assert_eq!(msg, original);
+    }
+
+    #[test]
+    fn test_apply_uri_rewrite_already_correct() {
+        let mut uri_languages = HashMap::new();
+        uri_languages.insert("file:///home/user/main.go".to_string(), "go".to_string());
+
+        let mut msg = serde_json::json!({
+            "method": "textDocument/formatting",
+            "params": {
+                "textDocument": {
+                    "uri": "file:///home/user/main.go"
+                }
+            }
+        });
+
+        let original = msg.clone();
+        apply_uri_rewrite(&mut msg, &uri_languages);
+        // Already correct extension — no rewrite.
+        assert_eq!(msg, original);
     }
 }
