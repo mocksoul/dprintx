@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use globset::{Glob, GlobMatcher};
 use std::path::{Path, PathBuf};
 
-use crate::config::MconfConfig;
+use crate::config::{self, MconfConfig};
 
 /// A compiled match rule: glob matcher + profile name.
 struct Rule {
@@ -21,8 +21,11 @@ impl ProfileMatcher {
         let mut rules = Vec::new();
 
         for (pattern, profile) in config.match_rules_iter() {
-            let glob =
-                Glob::new(pattern).with_context(|| format!("invalid glob pattern: {pattern}"))?;
+            // Expand ~ to home directory so globs like ~/workspace/** work.
+            let expanded = config::expand_tilde(pattern);
+            let expanded_str = expanded.to_string_lossy();
+            let glob = Glob::new(&expanded_str)
+                .with_context(|| format!("invalid glob pattern: {pattern}"))?;
             rules.push(Rule {
                 matcher: glob.compile_matcher(),
                 profile: profile.to_string(),
@@ -150,6 +153,32 @@ mod tests {
             .resolve_config(Path::new("/other/file.go"), &config)
             .unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_tilde_expansion_in_match_rules() {
+        let home = dirs::home_dir().unwrap();
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "special": "/config/special.jsonc",
+                "default": "/config/default.jsonc"
+            },
+            "match": {
+                "~/workspace/myproject/**": "special",
+                "**": "default"
+            }
+        }"#;
+        let config: MconfConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = ProfileMatcher::from_config(&config).unwrap();
+
+        // ~/workspace/myproject/foo.lua should match "special" after tilde expansion.
+        let test_path = home.join("workspace/myproject/foo.lua");
+        assert_eq!(matcher.match_profile(&test_path), Some("special"));
+
+        // Other paths should fall through to "default".
+        let other_path = home.join("workspace/other/bar.go");
+        assert_eq!(matcher.match_profile(&other_path), Some("default"));
     }
 
     #[test]
