@@ -1,14 +1,20 @@
 # dprint-mconf
 
-A wrapper around [dprint](https://dprint.dev/) that adds per-file config profiles.
+A wrapper around [dprint](https://dprint.dev/) that adds multi-config support and several missing features.
 
-## Why?
+## Features
 
-dprint doesn't support per-file config overrides ([#996](https://github.com/dprint/dprint/issues/996)). This wrapper
-selects the right dprint config based on file path using glob rules.
-
-Also adds unified diff output for `dprint check` ([#1092](https://github.com/dprint/dprint/issues/1092)) with optional
-pager support.
+- **[Per-file config profiles](#how-it-works)** — select dprint config by file path using glob rules
+  ([dprint#996](https://github.com/dprint/dprint/issues/996))
+- **[Local config overrides](#local-config-overrides)** — project-level `dprint.json` that merges with the matched
+  profile via `extends`
+- **[Unified diff output](#diff_pager)** — `dprint check` with real unified diff and optional pager
+  ([dprint#1092](https://github.com/dprint/dprint/issues/1092))
+- **[LSP proxy](#cli)** — spawns per-profile `dprint lsp` backends, routes requests by file URI
+- **[LSP URI rewriting](#lsp-uri-rewriting)** — format extensionless files (shell scripts, etc.) by appending the
+  correct extension based on editor's `languageId`
+- **[Transparent drop-in](#transparent-dprint-replacement)** — symlink as `dprint`, all unknown commands passthrough to
+  the real binary
 
 ## How it works
 
