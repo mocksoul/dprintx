@@ -105,7 +105,9 @@ The profile path is always prepended so that local settings win.
 
 If no local config is found, the profile config is used directly — no temp file is created.
 
-### LSP URI rewriting
+### LSP URI rewriting (opt-in)
+
+> **Disabled by default** for compatibility. Enable explicitly with `"lsp_rewrite_uris": true`.
 
 dprint matches files by extension, so extensionless files (e.g. shell scripts named `myscript`, Lua scripts without
 `.lua`) are silently skipped during LSP formatting.
