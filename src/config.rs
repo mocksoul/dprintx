@@ -2,6 +2,27 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Map;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Counter for generating unique temp file names within a process.
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// RAII guard for a temporary merged config file. Deletes the file on drop.
+pub struct TempConfig {
+    path: PathBuf,
+}
+
+impl TempConfig {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for TempConfig {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
 
 /// mconf.jsonc configuration.
 ///
@@ -86,6 +107,127 @@ impl MconfConfig {
             value.as_str().map(|profile| (pattern.as_str(), profile))
         })
     }
+}
+
+/// Find a local dprint config by walking up from the given directory.
+/// Looks for `dprint.json` and `dprint.jsonc` in each directory up to the root.
+pub fn find_local_config(start_dir: &Path) -> Option<PathBuf> {
+    let mut dir = start_dir;
+    loop {
+        for name in &["dprint.json", "dprint.jsonc"] {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        match dir.parent() {
+            Some(parent) => dir = parent,
+            None => return None,
+        }
+    }
+}
+
+/// Read a local dprint config file as a JSON Value.
+/// Handles both .json and .jsonc (strips comments and trailing commas).
+pub fn read_local_config(path: &Path) -> Result<serde_json::Value> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+
+    // Strip JSONC comments if needed (safe to run on plain JSON too).
+    let json = strip_jsonc_comments(&content);
+
+    serde_json::from_str(&json)
+        .with_context(|| format!("parsing local dprint config: {}", path.display()))
+}
+
+/// Inject a profile config path into the `extends` field of a local dprint config.
+///
+/// The profile path is prepended to extends so that local config settings
+/// take precedence (dprint applies extends first, then local overrides on top).
+///
+/// Handles three cases:
+/// - `extends` absent → set to the profile path string
+/// - `extends` is a string → convert to array [profile_path, old_string]
+/// - `extends` is an array → prepend profile_path
+pub fn inject_extends(config: &mut serde_json::Value, profile_config_path: &Path) {
+    let path_str = profile_config_path.display().to_string();
+    let obj = match config.as_object_mut() {
+        Some(obj) => obj,
+        None => return,
+    };
+
+    match obj.get("extends") {
+        None => {
+            obj.insert("extends".to_string(), serde_json::Value::String(path_str));
+        }
+        Some(serde_json::Value::String(_)) => {
+            let old = obj.remove("extends").unwrap();
+            let arr = serde_json::Value::Array(vec![serde_json::Value::String(path_str), old]);
+            obj.insert("extends".to_string(), arr);
+        }
+        Some(serde_json::Value::Array(_)) => {
+            if let Some(serde_json::Value::Array(arr)) = obj.get_mut("extends") {
+                arr.insert(0, serde_json::Value::String(path_str));
+            }
+        }
+        _ => {
+            // Unexpected type — overwrite with profile path.
+            obj.insert("extends".to_string(), serde_json::Value::String(path_str));
+        }
+    }
+}
+
+/// Build a merged config for a file: find local dprint config, inject profile
+/// extends, write to a unique temp file.
+///
+/// Returns None if no local config is found (caller should use profile config directly).
+/// Returns a `TempConfig` guard that auto-deletes the file on drop.
+///
+/// The temp file is written to `$XDG_RUNTIME_DIR/dprint-mconf/` (per-user, secure).
+/// Falls back to `$TMPDIR/dprint-mconf/` if unavailable.
+pub fn build_merged_config(
+    file_dir: &Path,
+    profile_config_path: &Path,
+) -> Result<Option<TempConfig>> {
+    let local_config_path = match find_local_config(file_dir) {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+
+    // If the local config IS the profile config, skip merging.
+    if local_config_path == profile_config_path {
+        return Ok(None);
+    }
+
+    let mut local_config = read_local_config(&local_config_path)?;
+    inject_extends(&mut local_config, profile_config_path);
+
+    // Write to a per-user runtime dir with a unique name.
+    let cache_dir = merged_config_dir()?;
+    let seq = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    let temp_path = cache_dir.join(format!("merged-{pid}-{seq}.json"));
+
+    let json = serde_json::to_string_pretty(&local_config).context("serializing merged config")?;
+    std::fs::write(&temp_path, json)
+        .with_context(|| format!("writing merged config to {}", temp_path.display()))?;
+
+    Ok(Some(TempConfig { path: temp_path }))
+}
+
+/// Get the directory for merged config temp files.
+/// Prefers $XDG_RUNTIME_DIR/dprint-mconf/ (per-user tmpfs, mode 700).
+/// Falls back to $TMPDIR/dprint-mconf/.
+fn merged_config_dir() -> Result<PathBuf> {
+    let dir = match dirs::runtime_dir() {
+        Some(runtime) => runtime.join("dprint-mconf"),
+        None => std::env::temp_dir().join("dprint-mconf"),
+    };
+
+    std::fs::create_dir_all(&dir)
+        .with_context(|| format!("creating merged config dir: {}", dir.display()))?;
+
+    Ok(dir)
 }
 
 /// Expand ~ to home directory in a path string.
@@ -271,5 +413,204 @@ mod tests {
         assert_eq!(rules[0], ("**/noc/cmdb/**", "maintainer"));
         assert_eq!(rules[1], ("**/noc/invapi/**", "maintainer"));
         assert_eq!(rules[2], ("**", "default"));
+    }
+
+    #[test]
+    fn test_inject_extends_absent() {
+        let mut config = serde_json::json!({
+            "typescript": { "lineWidth": 120 }
+        });
+        inject_extends(&mut config, Path::new("/profiles/main.jsonc"));
+        assert_eq!(config["extends"], "/profiles/main.jsonc");
+    }
+
+    #[test]
+    fn test_inject_extends_string() {
+        let mut config = serde_json::json!({
+            "extends": "https://example.com/base.json"
+        });
+        inject_extends(&mut config, Path::new("/profiles/main.jsonc"));
+        let extends = config["extends"].as_array().unwrap();
+        assert_eq!(extends.len(), 2);
+        assert_eq!(extends[0], "/profiles/main.jsonc");
+        assert_eq!(extends[1], "https://example.com/base.json");
+    }
+
+    #[test]
+    fn test_inject_extends_array() {
+        let mut config = serde_json::json!({
+            "extends": ["https://a.com/base.json", "https://b.com/extra.json"]
+        });
+        inject_extends(&mut config, Path::new("/profiles/main.jsonc"));
+        let extends = config["extends"].as_array().unwrap();
+        assert_eq!(extends.len(), 3);
+        assert_eq!(extends[0], "/profiles/main.jsonc");
+        assert_eq!(extends[1], "https://a.com/base.json");
+        assert_eq!(extends[2], "https://b.com/extra.json");
+    }
+
+    #[test]
+    fn test_find_local_config_direct() {
+        let dir = std::env::temp_dir().join("dprint-mconf-test-find-direct");
+        let _ = std::fs::create_dir_all(&dir);
+        let config_path = dir.join("dprint.json");
+        std::fs::write(&config_path, "{}").unwrap();
+
+        let result = find_local_config(&dir);
+        assert_eq!(result, Some(config_path));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_local_config_walkup() {
+        let root = std::env::temp_dir().join("dprint-mconf-test-find-walkup");
+        let sub = root.join("a").join("b").join("c");
+        let _ = std::fs::create_dir_all(&sub);
+
+        // Place config at root level.
+        let config_path = root.join("dprint.jsonc");
+        std::fs::write(&config_path, "{}").unwrap();
+
+        // Find from deeply nested dir should walk up and find it.
+        let result = find_local_config(&sub);
+        assert_eq!(result, Some(config_path));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_find_local_config_prefers_json_over_jsonc() {
+        let dir = std::env::temp_dir().join("dprint-mconf-test-find-prefer");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Both exist — dprint.json should be found first.
+        std::fs::write(dir.join("dprint.json"), "{}").unwrap();
+        std::fs::write(dir.join("dprint.jsonc"), "{}").unwrap();
+
+        let result = find_local_config(&dir);
+        assert_eq!(result, Some(dir.join("dprint.json")));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_find_local_config_none() {
+        // Use a directory with no dprint config in its ancestors (temp dir is unlikely to have one).
+        let dir = std::env::temp_dir().join("dprint-mconf-test-find-none");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // This test might find a real dprint.json somewhere up the tree,
+        // so we just verify the function doesn't crash.
+        let _ = find_local_config(&dir);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_build_merged_config_no_local() {
+        // No local config exists — returns None.
+        let result = build_merged_config(
+            Path::new("/nonexistent/dir"),
+            Path::new("/profiles/main.jsonc"),
+        )
+        .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_build_merged_config_with_local() {
+        let dir = std::env::temp_dir().join("dprint-mconf-test-build-merged");
+        let _ = std::fs::create_dir_all(&dir);
+
+        // Write a local dprint.json.
+        let local_path = dir.join("dprint.json");
+        std::fs::write(&local_path, r#"{"typescript": {"lineWidth": 120}}"#).unwrap();
+
+        let profile_path = Path::new("/profiles/main.jsonc");
+        let guard = build_merged_config(&dir, profile_path).unwrap();
+        assert!(guard.is_some());
+
+        let tc = guard.unwrap();
+        assert!(tc.path().exists());
+
+        let content = std::fs::read_to_string(tc.path()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(val["extends"], "/profiles/main.jsonc");
+        assert_eq!(val["typescript"]["lineWidth"], 120);
+
+        // File should be deleted when guard drops.
+        let path = tc.path().to_path_buf();
+        drop(tc);
+        assert!(!path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_build_merged_config_preserves_existing_extends() {
+        let dir = std::env::temp_dir().join("dprint-mconf-test-build-merged-extends");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let local_path = dir.join("dprint.json");
+        std::fs::write(
+            &local_path,
+            r#"{"extends": "https://example.com/base.json", "typescript": {"lineWidth": 80}}"#,
+        )
+        .unwrap();
+
+        let profile_path = Path::new("/profiles/main.jsonc");
+        let tc = build_merged_config(&dir, profile_path).unwrap().unwrap();
+
+        let content = std::fs::read_to_string(tc.path()).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // extends should now be an array with profile first.
+        let extends = val["extends"].as_array().unwrap();
+        assert_eq!(extends[0], "/profiles/main.jsonc");
+        assert_eq!(extends[1], "https://example.com/base.json");
+
+        let _ = std::fs::remove_dir_all(&dir);
+        // tc drops here → temp file auto-deleted
+    }
+
+    #[test]
+    fn test_read_local_config_json() {
+        let dir = std::env::temp_dir().join("dprint-mconf-test-read-local");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("dprint.json");
+        std::fs::write(&path, r#"{"plugins": ["https://example.com/plugin.wasm"]}"#).unwrap();
+
+        let val = read_local_config(&path).unwrap();
+        assert!(val.is_object());
+        assert!(val.get("plugins").unwrap().is_array());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_read_local_config_jsonc() {
+        let dir = std::env::temp_dir().join("dprint-mconf-test-read-local-jsonc");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("dprint.jsonc");
+        std::fs::write(
+            &path,
+            r#"{
+                // local overrides
+                "typescript": {
+                    "lineWidth": 120,
+                },
+                "plugins": [
+                    "https://example.com/plugin.wasm",
+                ],
+            }"#,
+        )
+        .unwrap();
+
+        let val = read_local_config(&path).unwrap();
+        assert!(val.is_object());
+        assert_eq!(val["typescript"]["lineWidth"], 120);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

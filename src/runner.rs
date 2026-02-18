@@ -3,7 +3,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use crate::config::MconfConfig;
+use crate::config::{self, MconfConfig};
 use crate::matcher::ProfileMatcher;
 
 /// Runs the real dprint binary with appropriate config.
@@ -33,7 +33,7 @@ impl DprintRunner {
             .resolve_config(&abs_path, config)
             .with_context(|| format!("resolving config for {filename}"))?;
 
-        let Some(config_path) = config_path else {
+        let Some(profile_config) = config_path else {
             // No profile matched — pass through stdin unchanged.
             let mut input = Vec::new();
             io::stdin()
@@ -41,6 +41,18 @@ impl DprintRunner {
                 .context("reading stdin")?;
             io::stdout().write_all(&input)?;
             return Ok(());
+        };
+
+        // Try to build a merged config (local dprint.json + profile extends).
+        // Hold the guard alive until dprint finishes — it deletes the temp file on drop.
+        let merged_guard = if let Some(parent) = abs_path.parent() {
+            config::build_merged_config(parent, &profile_config)?
+        } else {
+            None
+        };
+        let effective_config = match &merged_guard {
+            Some(tc) => tc.path(),
+            None => &profile_config,
         };
 
         // Read all stdin.
@@ -52,7 +64,7 @@ impl DprintRunner {
         // Run: dprint fmt --stdin <filename> --config <config_path>
         let mut child = Command::new(&self.dprint_bin)
             .args(["fmt", "--stdin", filename, "--config"])
-            .arg(&config_path)
+            .arg(effective_config)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -173,25 +185,37 @@ impl DprintRunner {
         Ok(())
     }
 
-    /// Format explicit files, grouped by profile.
+    /// Format explicit files, grouped by effective config (profile or merged).
     pub fn fmt_files(
         &self,
         files: &[String],
         matcher: &ProfileMatcher,
         config: &MconfConfig,
     ) -> Result<()> {
-        // Group files by their resolved config path.
-        let mut groups: std::collections::HashMap<std::path::PathBuf, Vec<&str>> =
+        // Hold all merged config guards alive until dprint finishes.
+        let mut _guards: Vec<config::TempConfig> = Vec::new();
+        let mut groups: std::collections::HashMap<PathBuf, Vec<&str>> =
             std::collections::HashMap::new();
 
         for file in files {
-            let abs_path =
-                std::fs::canonicalize(file).unwrap_or_else(|_| std::path::PathBuf::from(file));
-            let config_path = matcher
+            let abs_path = std::fs::canonicalize(file).unwrap_or_else(|_| PathBuf::from(file));
+            let profile_config = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
-            if let Some(config_path) = config_path {
-                groups.entry(config_path).or_default().push(file);
+            if let Some(profile_config) = profile_config {
+                let effective = if let Some(parent) = abs_path.parent() {
+                    match config::build_merged_config(parent, &profile_config)? {
+                        Some(tc) => {
+                            let p = tc.path().to_path_buf();
+                            _guards.push(tc);
+                            p
+                        }
+                        None => profile_config,
+                    }
+                } else {
+                    profile_config
+                };
+                groups.entry(effective).or_default().push(file);
             }
         }
 
@@ -218,6 +242,7 @@ impl DprintRunner {
         }
 
         Ok(())
+        // _guards drop here → temp files deleted
     }
 
     /// Format all files using all profiles.
@@ -238,6 +263,7 @@ impl DprintRunner {
     }
 
     /// Run a subcommand (fmt/check) for all profiles.
+    /// Files are grouped by effective config (merged local + profile, or just profile).
     fn run_all(&self, subcmd: &str, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
         let mut failed = false;
 
@@ -252,6 +278,11 @@ impl DprintRunner {
                 }
             }
         }
+
+        // Hold all merged config guards alive until all dprint commands finish.
+        let mut _guards: Vec<config::TempConfig> = Vec::new();
+        let mut effective_groups: std::collections::HashMap<PathBuf, Vec<String>> =
+            std::collections::HashMap::new();
 
         for (profile_name, profile_config) in &profile_configs {
             // Get file list from dprint for this profile.
@@ -274,32 +305,51 @@ impl DprintRunner {
             }
 
             let file_list = String::from_utf8_lossy(&output.stdout);
-            let files: Vec<&str> = file_list
-                .lines()
-                .filter(|line| {
-                    // Only include files that match this profile.
-                    let resolved = matcher.resolve_config(std::path::Path::new(line), config);
-                    match resolved {
-                        Ok(Some(ref p)) => p == profile_config,
-                        _ => false,
-                    }
-                })
-                .collect();
+            for line in file_list.lines() {
+                // Only include files that match this profile.
+                let resolved = matcher.resolve_config(std::path::Path::new(line), config);
+                match resolved {
+                    Ok(Some(ref p)) if p == profile_config => {}
+                    _ => continue,
+                }
 
+                // Resolve effective config (merged or profile).
+                let file_path = std::path::Path::new(line);
+                let effective = if let Some(parent) = file_path.parent() {
+                    match config::build_merged_config(parent, profile_config)? {
+                        Some(tc) => {
+                            let p = tc.path().to_path_buf();
+                            _guards.push(tc);
+                            p
+                        }
+                        None => profile_config.clone(),
+                    }
+                } else {
+                    profile_config.clone()
+                };
+                effective_groups
+                    .entry(effective)
+                    .or_default()
+                    .push(line.to_string());
+            }
+        }
+
+        // Run dprint once per effective config group.
+        for (effective_config, files) in &effective_groups {
             if files.is_empty() {
                 continue;
             }
 
             let mut cmd = Command::new(&self.dprint_bin);
-            cmd.arg(subcmd).arg("--config").arg(profile_config);
-            for f in &files {
+            cmd.arg(subcmd).arg("--config").arg(effective_config);
+            for f in files {
                 cmd.arg(f);
             }
 
             let status = cmd.status().with_context(|| {
                 format!(
                     "running dprint {subcmd} --config {}",
-                    profile_config.display()
+                    effective_config.display()
                 )
             })?;
 
@@ -315,7 +365,7 @@ impl DprintRunner {
         Ok(())
     }
 
-    /// Check explicit files, grouped by profile.
+    /// Check explicit files, grouped by effective config (profile or merged).
     /// If diff_pager is configured, produces unified diff output.
     pub fn check_files(
         &self,
@@ -327,16 +377,29 @@ impl DprintRunner {
             return self.check_diff_files(files, matcher, config);
         }
 
+        let mut _guards: Vec<config::TempConfig> = Vec::new();
         let mut groups: std::collections::HashMap<PathBuf, Vec<&str>> =
             std::collections::HashMap::new();
 
         for file in files {
             let abs_path = std::fs::canonicalize(file).unwrap_or_else(|_| PathBuf::from(file));
-            let config_path = matcher
+            let profile_config = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
-            if let Some(config_path) = config_path {
-                groups.entry(config_path).or_default().push(file);
+            if let Some(profile_config) = profile_config {
+                let effective = if let Some(parent) = abs_path.parent() {
+                    match config::build_merged_config(parent, &profile_config)? {
+                        Some(tc) => {
+                            let p = tc.path().to_path_buf();
+                            _guards.push(tc);
+                            p
+                        }
+                        None => profile_config,
+                    }
+                } else {
+                    profile_config
+                };
+                groups.entry(effective).or_default().push(file);
             }
         }
 
@@ -369,6 +432,7 @@ impl DprintRunner {
     /// Check all files with unified diff output.
     fn check_diff_all(&self, matcher: &ProfileMatcher, config: &MconfConfig) -> Result<()> {
         let mut all_diff = String::new();
+        let mut _guards: Vec<config::TempConfig> = Vec::new();
 
         let mut seen = std::collections::HashSet::new();
         let mut profile_configs: Vec<PathBuf> = Vec::new();
@@ -390,7 +454,23 @@ impl DprintRunner {
                     Ok(Some(ref p)) if p == profile_config => {}
                     _ => continue,
                 }
-                if let Some(diff) = self.unified_diff_for_file(file, profile_config)? {
+
+                // Resolve effective config (merged or profile).
+                let file_path = std::path::Path::new(file.as_str());
+                let effective = if let Some(parent) = file_path.parent() {
+                    match config::build_merged_config(parent, profile_config)? {
+                        Some(tc) => {
+                            let p = tc.path().to_path_buf();
+                            _guards.push(tc);
+                            p
+                        }
+                        None => profile_config.clone(),
+                    }
+                } else {
+                    profile_config.clone()
+                };
+
+                if let Some(diff) = self.unified_diff_for_file(file, &effective)? {
                     all_diff.push_str(&diff);
                 }
             }
@@ -407,18 +487,33 @@ impl DprintRunner {
         config: &MconfConfig,
     ) -> Result<()> {
         let mut all_diff = String::new();
+        let mut _guards: Vec<config::TempConfig> = Vec::new();
 
         for file in files {
             let abs_path = std::fs::canonicalize(file).unwrap_or_else(|_| PathBuf::from(file));
-            let config_path = matcher
+            let profile_config = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
 
-            let Some(config_path) = config_path else {
+            let Some(profile_config) = profile_config else {
                 continue; // No profile matched — skip.
             };
 
-            if let Some(diff) = self.unified_diff_for_file(file, &config_path)? {
+            // Resolve effective config (merged or profile).
+            let effective = if let Some(parent) = abs_path.parent() {
+                match config::build_merged_config(parent, &profile_config)? {
+                    Some(tc) => {
+                        let p = tc.path().to_path_buf();
+                        _guards.push(tc);
+                        p
+                    }
+                    None => profile_config,
+                }
+            } else {
+                profile_config
+            };
+
+            if let Some(diff) = self.unified_diff_for_file(file, &effective)? {
                 all_diff.push_str(&diff);
             }
         }

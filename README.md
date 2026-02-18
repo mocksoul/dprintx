@@ -45,6 +45,55 @@ dprint-mconf check > fix.patch  # unified diff to file
 
 Without `diff_pager`, `dprint check` behaves exactly like the original dprint.
 
+### Local config overrides
+
+Projects can define local formatting rules that override the matched profile.
+
+**How it works:**
+
+1. For each file being formatted, dprint-mconf walks up the directory tree looking for `dprint.json` or `dprint.jsonc` (stops at the first one found)
+2. If found, it reads the local config and injects the matched profile path into `extends`
+3. A temporary merged config is written and passed to dprint instead of the profile config
+4. The temp file is auto-deleted when the command finishes (RAII guard)
+
+Since dprint applies `extends` first and then overlays local settings on top, the local config takes precedence.
+
+**Example:**
+
+```jsonc
+// ~/projects/my-app/dprint.json — only the overrides you care about
+{
+  "yaml": {
+    "commentSpacing": "ignore"
+  }
+}
+```
+
+When formatting files under `~/projects/my-app/`, dprint-mconf generates a temporary config equivalent to:
+
+```jsonc
+{
+  "extends": "/home/user/.config/dprint/dprint-default.jsonc",
+  "yaml": {
+    "commentSpacing": "ignore"
+  }
+}
+```
+
+**`extends` handling:**
+
+| Local config `extends`       | Result                                          |
+| ---------------------------- | ----------------------------------------------- |
+| absent                       | set to profile path                             |
+| `"https://example.com/base"` | `["/profile/path", "https://example.com/base"]` |
+| `["a.json", "b.json"]`       | `["/profile/path", "a.json", "b.json"]`         |
+
+The profile path is always prepended so that local settings win.
+
+**Temp file location:** `$XDG_RUNTIME_DIR/dprint-mconf/` (per-user, mode 700). Falls back to `$TMPDIR/dprint-mconf/` if `XDG_RUNTIME_DIR` is unavailable. Files are named `merged-{pid}-{seq}.json` and cleaned up automatically.
+
+If no local config is found, the profile config is used directly — no temp file is created.
+
 ## CLI
 
 ```bash

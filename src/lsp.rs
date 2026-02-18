@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::config::MconfConfig;
+use crate::config::{self, MconfConfig};
 use crate::matcher::ProfileMatcher;
 
 /// Timeout for reading LSP responses from backends.
@@ -52,8 +52,11 @@ impl LspProxy {
         let stdin = io::stdin();
         let mut reader = BufReader::new(stdin.lock());
 
-        // Track initialize request ID to respond ourselves.
+        // Track initialize state for lazy backend spawning.
         let mut _initialized = false;
+        let mut last_init_params: Option<serde_json::Value> = None;
+        // Hold merged config guards alive for the lifetime of LSP backends.
+        let mut _merged_guards: Vec<config::TempConfig> = Vec::new();
 
         loop {
             // Read LSP message (Content-Length header + body).
@@ -75,6 +78,7 @@ impl LspProxy {
                     // Start all backends with initialize.
                     let id = parsed.get("id").cloned();
                     let params = parsed.get("params").cloned();
+                    last_init_params = params.clone();
 
                     // Spawn backends for each unique profile.
                     let mut profile_configs = Vec::new();
@@ -188,7 +192,7 @@ impl LspProxy {
                     );
                     if let Some(uri) = uri {
                         let file_path = uri_to_path(&uri);
-                        let config_path =
+                        let profile_config =
                             match self.matcher.resolve_config(&file_path, &self.config) {
                                 Ok(Some(p)) => p,
                                 _ => {
@@ -208,25 +212,85 @@ impl LspProxy {
                                 }
                             };
 
-                        // Ensure backend is spawned.
+                        // Resolve effective config (merged local + profile, or just profile).
+                        let effective_config = if let Some(parent) = file_path.parent() {
+                            match config::build_merged_config(parent, &profile_config) {
+                                Ok(Some(tc)) => {
+                                    let p = tc.path().to_path_buf();
+                                    _merged_guards.push(tc);
+                                    p
+                                }
+                                Ok(None) => profile_config,
+                                Err(e) => {
+                                    eprintln!("mconf: warning: build_merged_config failed: {e}");
+                                    profile_config
+                                }
+                            }
+                        } else {
+                            profile_config
+                        };
+
+                        // Ensure backend is spawned (lazily for merged configs).
                         {
                             let backends_lock = backends.lock().unwrap();
-                            if !backends_lock.contains_key(&config_path) {
+                            if !backends_lock.contains_key(&effective_config) {
                                 drop(backends_lock);
-                                let backend = self.spawn_backend(&config_path)?;
+                                let backend = self.spawn_backend(&effective_config)?;
                                 let mut backends_lock = backends.lock().unwrap();
-                                backends_lock.insert(config_path.clone(), backend);
-                                // TODO: should send initialize to new backend
+                                backends_lock.insert(effective_config.clone(), backend);
+                                drop(backends_lock);
+
+                                // Send initialize to the new backend.
+                                if let Some(init_params) = &last_init_params {
+                                    let mut params = init_params.clone();
+                                    if let Some(config_dir) = effective_config.parent() {
+                                        let root_uri = format!("file://{}", config_dir.display());
+                                        params["rootUri"] =
+                                            serde_json::Value::String(root_uri.clone());
+                                        params["rootPath"] = serde_json::Value::String(
+                                            config_dir.display().to_string(),
+                                        );
+                                    }
+                                    let init_msg = serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "method": "initialize",
+                                        "params": params,
+                                    });
+                                    let _ = self.send_to_backend(
+                                        &backends,
+                                        &effective_config,
+                                        &init_msg,
+                                    );
+                                    // Read and discard initialize response.
+                                    let _ = self.read_from_backend(
+                                        &backends,
+                                        &effective_config,
+                                        &stdout,
+                                    );
+
+                                    // Send initialized notification.
+                                    let initialized_msg = serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "method": "initialized",
+                                        "params": {},
+                                    });
+                                    let _ = self.send_to_backend(
+                                        &backends,
+                                        &effective_config,
+                                        &initialized_msg,
+                                    );
+                                }
                             }
                         }
 
                         // Send request to the right backend.
-                        self.send_to_backend(&backends, &config_path, &parsed)?;
+                        self.send_to_backend(&backends, &effective_config, &parsed)?;
 
                         // If it's a request (has id), read response.
                         if let Some(id) = parsed.get("id").cloned() {
                             let t0 = std::time::Instant::now();
-                            match self.read_from_backend(&backends, &config_path, &stdout) {
+                            match self.read_from_backend(&backends, &effective_config, &stdout) {
                                 Ok(resp) => {
                                     eprintln!(
                                         "mconf: {} responded in {:?}",
