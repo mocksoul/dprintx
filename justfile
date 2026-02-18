@@ -1,3 +1,7 @@
+# Detect clippy/fmt: prefer cargo subcommand (rustup), fall back to standalone binary (Gentoo)
+clippy := if `cargo clippy --version 2>/dev/null; echo $?` =~ "0$" { "cargo clippy" } else { "cargo-clippy --" }
+fmt := if `cargo fmt --version 2>/dev/null; echo $?` =~ "0$" { "cargo fmt" } else { "cargo-fmt" }
+
 # Build debug binary
 build:
     cargo build
@@ -11,6 +15,6 @@ install: build-release
 
 # Run all CI checks (clippy + fmt + test)
 check:
-    cargo-clippy -- -- -D warnings
-    cargo-fmt --check
+    {{ clippy }} -- -D warnings
+    {{ fmt }} --check
     cargo test
