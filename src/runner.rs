@@ -567,11 +567,7 @@ impl DprintRunner {
         }
 
         // Build unified diff via system diff.
-        let (label_a, label_b) = if file.starts_with('/') {
-            (format!("a{file}"), format!("b{file}"))
-        } else {
-            (format!("a/{file}"), format!("b/{file}"))
-        };
+        let label = file.to_string();
 
         let tmp_dir = std::env::temp_dir();
         let orig_path = tmp_dir.join("dprint-mconf-orig");
@@ -580,7 +576,7 @@ impl DprintRunner {
         std::fs::write(&fmt_path, formatted.as_bytes())?;
 
         let diff_out = Command::new("diff")
-            .args(["-u", "--label", &label_a, "--label", &label_b])
+            .args(["-u", "--label", &label, "--label", &label])
             .arg(&orig_path)
             .arg(&fmt_path)
             .output()
