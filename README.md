@@ -54,7 +54,7 @@ against the directory containing `dprintx.jsonc`:
 
 ```jsonc
 {
-  "dprint": "bin/dprint",          // → ~/.config/dprint/bin/dprint
+  "dprint": "bin/dprint", // → ~/.config/dprint/bin/dprint
   "profiles": {
     "main": "profiles/main.jsonc", // → ~/.config/dprint/profiles/main.jsonc
   },

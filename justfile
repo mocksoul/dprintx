@@ -13,9 +13,9 @@ build-release:
 # Install (symlink already points to target/release)
 install: build-release
 
-# Run all CI checks (dprint fmt + clippy + cargo fmt + test)
+# Run all CI checks (dprint check + clippy + cargo fmt + test)
 check:
-    which dprint >/dev/null 2>&1 && dprint fmt || true
+    which dprint >/dev/null 2>&1 && dprint check || true
     {{ clippy }} -- -D warnings
     {{ fmt }} --check
     cargo test
