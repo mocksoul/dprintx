@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use std::path::Path;
 
 use cli::{Cli, CliCommand};
-use config::DprintxConfig;
+use config::{DprintxConfig, ProfileResolution};
 use matcher::ProfileMatcher;
 use runner::DprintRunner;
 
@@ -104,7 +104,8 @@ fn cmd_config(matcher: &ProfileMatcher, config: &DprintxConfig, file: Option<&st
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {f}"))?;
             match config_path {
-                Some(p) => println!("{}", p.display()),
+                Some(ProfileResolution::Config(p)) => println!("{}", p.display()),
+                Some(ProfileResolution::Ignore) => println!("(ignored)"),
                 None => println!("(no matching profile)"),
             }
         }
@@ -112,13 +113,25 @@ fn cmd_config(matcher: &ProfileMatcher, config: &DprintxConfig, file: Option<&st
             println!("dprint: {}", config.dprint_path().display());
             println!("profiles:");
             for (name, value) in &config.profiles {
-                if let Some(path) = value.as_str() {
-                    println!("  {name}: {}", config::expand_tilde(path).display());
+                match value {
+                    serde_json::Value::String(path) => {
+                        println!("  {name}: {}", config::expand_tilde(path).display());
+                    }
+                    serde_json::Value::Null => {
+                        println!("  {name}: (ignore)");
+                    }
+                    _ => {}
                 }
             }
             println!("match rules:");
             for (pattern, profile) in config.match_rules_iter() {
                 println!("  {pattern} -> {profile}");
+            }
+            if config.match_content.is_some() {
+                println!("match content rules:");
+                for (pattern, profile) in config.match_content_rules_iter() {
+                    println!("  /{pattern}/ -> {profile}");
+                }
             }
         }
     }

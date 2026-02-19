@@ -3,7 +3,7 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use crate::config::{self, DprintxConfig};
+use crate::config::{self, DprintxConfig, ProfileResolution};
 use crate::matcher::ProfileMatcher;
 
 /// Runs the real dprint binary with appropriate config.
@@ -33,8 +33,8 @@ impl DprintRunner {
             .resolve_config(&abs_path, config)
             .with_context(|| format!("resolving config for {filename}"))?;
 
-        let Some(profile_config) = config_path else {
-            // No profile matched — pass through stdin unchanged.
+        let Some(ProfileResolution::Config(profile_config)) = config_path else {
+            // No profile matched or ignore — pass through stdin unchanged.
             let mut input = Vec::new();
             io::stdin()
                 .read_to_end(&mut input)
@@ -107,7 +107,8 @@ impl DprintRunner {
         let mut profile_configs: Vec<std::path::PathBuf> = Vec::new();
 
         for (_pattern, profile_name) in config.match_rules_iter() {
-            if let Some(config_path) = config.profile_config_path(profile_name)
+            if let Some(ProfileResolution::Config(config_path)) =
+                config.resolve_profile(profile_name)
                 && seen.insert(config_path.clone())
             {
                 profile_configs.push(config_path);
@@ -129,7 +130,7 @@ impl DprintRunner {
                 let file_list = String::from_utf8_lossy(&output.stdout);
                 for line in file_list.lines() {
                     let resolved = matcher.resolve_config(std::path::Path::new(line), config);
-                    if let Ok(Some(ref p)) = resolved
+                    if let Ok(Some(ProfileResolution::Config(ref p))) = resolved
                         && p == profile_config
                     {
                         all_files.insert(line.to_string());
@@ -242,10 +243,10 @@ impl DprintRunner {
 
         for file in files {
             let abs_path = std::fs::canonicalize(file).unwrap_or_else(|_| PathBuf::from(file));
-            let profile_config = matcher
+            let resolution = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
-            if let Some(profile_config) = profile_config {
+            if let Some(ProfileResolution::Config(profile_config)) = resolution {
                 let effective = if let Some(parent) = abs_path.parent() {
                     match config::build_merged_config(parent, &profile_config)? {
                         Some(tc) => {
@@ -321,7 +322,8 @@ impl DprintRunner {
 
         for (_pattern, profile_name) in config.match_rules_iter() {
             if seen.insert(profile_name.to_string())
-                && let Some(config_path) = config.profile_config_path(profile_name)
+                && let Some(ProfileResolution::Config(config_path)) =
+                    config.resolve_profile(profile_name)
             {
                 profile_configs.push((profile_name.to_string(), config_path));
             }
@@ -355,7 +357,7 @@ impl DprintRunner {
                 // Only include files that match this profile.
                 let resolved = matcher.resolve_config(std::path::Path::new(line), config);
                 match resolved {
-                    Ok(Some(ref p)) if p == profile_config => {}
+                    Ok(Some(ProfileResolution::Config(ref p))) if p == profile_config => {}
                     _ => continue,
                 }
 
@@ -429,10 +431,10 @@ impl DprintRunner {
 
         for file in files {
             let abs_path = std::fs::canonicalize(file).unwrap_or_else(|_| PathBuf::from(file));
-            let profile_config = matcher
+            let resolution = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
-            if let Some(profile_config) = profile_config {
+            if let Some(ProfileResolution::Config(profile_config)) = resolution {
                 let effective = if let Some(parent) = abs_path.parent() {
                     match config::build_merged_config(parent, &profile_config)? {
                         Some(tc) => {
@@ -484,7 +486,8 @@ impl DprintRunner {
         let mut profile_configs: Vec<PathBuf> = Vec::new();
         for (_pattern, profile_name) in config.match_rules_iter() {
             if seen.insert(profile_name.to_string())
-                && let Some(config_path) = config.profile_config_path(profile_name)
+                && let Some(ProfileResolution::Config(config_path)) =
+                    config.resolve_profile(profile_name)
             {
                 profile_configs.push(config_path);
             }
@@ -497,7 +500,7 @@ impl DprintRunner {
                 // Filter: only files that belong to this profile.
                 let resolved = matcher.resolve_config(std::path::Path::new(file), config);
                 match resolved {
-                    Ok(Some(ref p)) if p == profile_config => {}
+                    Ok(Some(ProfileResolution::Config(ref p))) if p == profile_config => {}
                     _ => continue,
                 }
 
@@ -537,12 +540,12 @@ impl DprintRunner {
 
         for file in files {
             let abs_path = std::fs::canonicalize(file).unwrap_or_else(|_| PathBuf::from(file));
-            let profile_config = matcher
+            let resolution = matcher
                 .resolve_config(&abs_path, config)
                 .with_context(|| format!("resolving config for {file}"))?;
 
-            let Some(profile_config) = profile_config else {
-                continue; // No profile matched — skip.
+            let Some(ProfileResolution::Config(profile_config)) = resolution else {
+                continue; // No profile matched or ignore — skip.
             };
 
             // Resolve effective config (merged or profile).

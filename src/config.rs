@@ -1,8 +1,18 @@
 use anyhow::{Context, Result};
+use regex::{RegexSet, RegexSetBuilder};
 use serde::Deserialize;
 use serde_json::Map;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Result of resolving a profile name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileResolution {
+    /// Profile maps to a config file path.
+    Config(PathBuf),
+    /// Profile is explicitly set to null (ignore/skip file).
+    Ignore,
+}
 
 /// Counter for generating unique temp file names within a process.
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -33,11 +43,15 @@ impl Drop for TempConfig {
 ///   "profiles": {
 ///     "maintainer": "~/.config/dprint/dprint-maintainer.jsonc",
 ///     "default": "~/.config/dprint/dprint-default.jsonc",
+///     "ignore": null,
 ///   },
 ///   "match": {
 ///     "**/noc/cmdb/**": "maintainer",
 ///     "**/noc/invapi/**": "maintainer",
 ///     "**": "default",
+///   },
+///   "match_content": {
+///     "^// Code generated .+ DO NOT EDIT\\.$": "ignore",
 ///   },
 /// }
 /// ```
@@ -46,13 +60,19 @@ pub struct DprintxConfig {
     /// Path to real dprint binary.
     pub dprint: String,
 
-    /// Named profiles: name → config path.
+    /// Named profiles: name → config path (string) or null (ignore).
     pub profiles: Map<String, serde_json::Value>,
 
     /// Ordered match rules: glob pattern → profile name.
     /// Uses serde_json::Map with preserve_order for first-match semantics.
     #[serde(rename = "match")]
     pub match_rules: Map<String, serde_json::Value>,
+
+    /// Ordered content match rules: regex pattern → profile name.
+    /// Applied after path match. Scans entire file in line-aligned blocks.
+    /// First match wins and overrides the path-matched profile.
+    #[serde(default)]
+    pub match_content: Option<Map<String, serde_json::Value>>,
 
     /// Optional diff pager command for `dprint check` (e.g. "delta -s").
     /// When set, check produces unified diff output:
@@ -102,11 +122,18 @@ impl DprintxConfig {
         expand_tilde(&self.dprint)
     }
 
-    /// Resolve a profile name to its config file path.
-    pub fn profile_config_path(&self, profile_name: &str) -> Option<PathBuf> {
-        self.profiles
-            .get(profile_name)
-            .and_then(|v| v.as_str().map(expand_tilde))
+    /// Resolve a profile name to its resolution (config path or ignore).
+    ///
+    /// Returns:
+    /// - `Some(Config(path))` if profile maps to a config file path
+    /// - `Some(Ignore)` if profile is explicitly null
+    /// - `None` if profile name is not defined
+    pub fn resolve_profile(&self, profile_name: &str) -> Option<ProfileResolution> {
+        match self.profiles.get(profile_name) {
+            Some(serde_json::Value::String(s)) => Some(ProfileResolution::Config(expand_tilde(s))),
+            Some(serde_json::Value::Null) => Some(ProfileResolution::Ignore),
+            _ => None,
+        }
     }
 
     /// Get ordered match rules as (glob_pattern, profile_name) pairs.
@@ -114,6 +141,63 @@ impl DprintxConfig {
         self.match_rules.iter().filter_map(|(pattern, value)| {
             value.as_str().map(|profile| (pattern.as_str(), profile))
         })
+    }
+
+    /// Get ordered content match rules as (regex_pattern, profile_name) pairs.
+    /// Returns empty iterator if match_content is not configured.
+    pub fn match_content_rules_iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.match_content
+            .iter()
+            .flat_map(|m| m.iter())
+            .filter_map(|(pattern, value)| {
+                value.as_str().map(|profile| (pattern.as_str(), profile))
+            })
+    }
+
+    /// Compile content match patterns into a RegexSet for efficient matching.
+    /// Returns None if no match_content rules are configured.
+    pub fn compile_content_patterns(&self) -> Result<Option<ContentMatcher>> {
+        let rules: Vec<(&str, &str)> = self.match_content_rules_iter().collect();
+        if rules.is_empty() {
+            return Ok(None);
+        }
+
+        let patterns: Vec<&str> = rules.iter().map(|(p, _)| *p).collect();
+        let profiles: Vec<String> = rules.iter().map(|(_, p)| p.to_string()).collect();
+
+        let regex_set = RegexSetBuilder::new(&patterns)
+            .multi_line(true)
+            .build()
+            .context("invalid regex in match_content")?;
+
+        Ok(Some(ContentMatcher {
+            regex_set,
+            profiles,
+        }))
+    }
+}
+
+/// Compiled content match rules for efficient file content matching.
+/// Uses multi-line mode: `^` matches at start of any line, `$` at end of any line.
+#[derive(Debug)]
+pub struct ContentMatcher {
+    /// Compiled regex set (multi-line mode) for matching file content.
+    regex_set: RegexSet,
+    /// Profile names corresponding to each regex pattern (same order).
+    profiles: Vec<String>,
+}
+
+impl ContentMatcher {
+    /// Match file content against compiled patterns.
+    /// Returns the profile name of the first matching pattern, or None.
+    pub fn match_content(&self, content: &str) -> Option<&str> {
+        // RegexSet::matches returns all matches; we want first-match semantics
+        // based on config order, so take the minimum index.
+        self.regex_set
+            .matches(content)
+            .iter()
+            .next()
+            .map(|idx| self.profiles[idx].as_str())
     }
 }
 
@@ -421,6 +505,216 @@ mod tests {
         assert_eq!(rules[0], ("**/noc/cmdb/**", "maintainer"));
         assert_eq!(rules[1], ("**/noc/invapi/**", "maintainer"));
         assert_eq!(rules[2], ("**", "default"));
+
+        // No match_content by default.
+        assert!(config.match_content.is_none());
+    }
+
+    #[test]
+    fn test_resolve_profile_config() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "maintainer": "/config/dprint-maintainer.jsonc",
+                "default": "/config/dprint-default.jsonc"
+            },
+            "match": { "**": "default" }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.resolve_profile("maintainer"),
+            Some(ProfileResolution::Config(PathBuf::from(
+                "/config/dprint-maintainer.jsonc"
+            )))
+        );
+        assert_eq!(
+            config.resolve_profile("default"),
+            Some(ProfileResolution::Config(PathBuf::from(
+                "/config/dprint-default.jsonc"
+            )))
+        );
+        assert_eq!(config.resolve_profile("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_resolve_profile_null_ignore() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "default": "/config/dprint-default.jsonc",
+                "ignore": null
+            },
+            "match": { "**": "default" }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+
+        assert_eq!(
+            config.resolve_profile("ignore"),
+            Some(ProfileResolution::Ignore)
+        );
+        assert_eq!(
+            config.resolve_profile("default"),
+            Some(ProfileResolution::Config(PathBuf::from(
+                "/config/dprint-default.jsonc"
+            )))
+        );
+    }
+
+    #[test]
+    fn test_parse_match_content() {
+        let input = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "default": "/config/default.jsonc",
+                "ignore": null
+            },
+            "match": { "**": "default" },
+            "match_content": {
+                "^// Code generated .+ DO NOT EDIT\\.$": "ignore",
+                "^# Code generated .+ DO NOT EDIT\\.$": "ignore"
+            }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(input).unwrap();
+
+        assert!(config.match_content.is_some());
+        let rules: Vec<(&str, &str)> = config.match_content_rules_iter().collect();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].1, "ignore");
+        assert_eq!(rules[1].1, "ignore");
+    }
+
+    #[test]
+    fn test_compile_content_patterns() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "default": "/config/default.jsonc",
+                "ignore": null
+            },
+            "match": { "**": "default" },
+            "match_content": {
+                "^// Code generated .+ DO NOT EDIT\\.$": "ignore"
+            }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+
+        let matcher = config.compile_content_patterns().unwrap();
+        assert!(matcher.is_some());
+
+        let matcher = matcher.unwrap();
+        assert_eq!(
+            matcher.match_content("// Code generated by protoc DO NOT EDIT."),
+            Some("ignore")
+        );
+        assert_eq!(
+            matcher.match_content("package main\n\nfunc main() {}"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_compile_content_patterns_none() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": { "default": "/config/default.jsonc" },
+            "match": { "**": "default" }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+
+        let matcher = config.compile_content_patterns().unwrap();
+        assert!(matcher.is_none());
+    }
+
+    #[test]
+    fn test_content_matcher_empty_content() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "default": "/config/default.jsonc",
+                "ignore": null
+            },
+            "match": { "**": "default" },
+            "match_content": {
+                "DO NOT EDIT": "ignore"
+            }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = config.compile_content_patterns().unwrap().unwrap();
+
+        assert_eq!(matcher.match_content(""), None);
+    }
+
+    #[test]
+    fn test_content_matcher_multiline() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "default": "/config/default.jsonc",
+                "ignore": null
+            },
+            "match": { "**": "default" },
+            "match_content": {
+                "DO NOT EDIT": "ignore"
+            }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = config.compile_content_patterns().unwrap().unwrap();
+
+        // Pattern found on line 3 — still matches (regex searches full content).
+        let content = "package main\n\nimport \"fmt\"\n// DO NOT EDIT\nfunc main() {}";
+        assert_eq!(matcher.match_content(content), Some("ignore"));
+
+        // Pattern not present at all.
+        let content = "package main\n\nfunc main() {}";
+        assert_eq!(matcher.match_content(content), None);
+    }
+
+    #[test]
+    fn test_compile_content_patterns_invalid_regex() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": { "ignore": null },
+            "match": { "**": "ignore" },
+            "match_content": {
+                "[invalid regex": "ignore"
+            }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+
+        let result = config.compile_content_patterns();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("invalid regex"));
+    }
+
+    #[test]
+    fn test_content_matcher_first_match_wins() {
+        let config_json = r#"{
+            "dprint": "/usr/bin/dprint",
+            "profiles": {
+                "default": "/config/default.jsonc",
+                "ignore": null,
+                "strict": "/config/strict.jsonc"
+            },
+            "match": { "**": "default" },
+            "match_content": {
+                "DO NOT EDIT": "ignore",
+                "STRICT MODE": "strict"
+            }
+        }"#;
+        let config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+        let matcher = config.compile_content_patterns().unwrap().unwrap();
+
+        // Both patterns match — first one (ignore) wins.
+        assert_eq!(
+            matcher.match_content("// DO NOT EDIT STRICT MODE"),
+            Some("ignore")
+        );
+        // Only second matches.
+        assert_eq!(
+            matcher.match_content("// STRICT MODE enabled"),
+            Some("strict")
+        );
     }
 
     #[test]

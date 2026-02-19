@@ -6,6 +6,7 @@ A wrapper around [dprint](https://dprint.dev/) that adds multi-config support an
 
 - **[Per-file config profiles](#how-it-works)** — select dprint config by file path using glob rules
   ([dprint#996](https://github.com/dprint/dprint/issues/996))
+- **[Content-based matching](#content-based-matching)** — override profile by file content (e.g. skip generated files)
 - **[Local config overrides](#local-config-overrides)** — project-level `dprint.json` that merges with the matched
   profile via `extends`
 - **[Unified diff output](#diff_pager)** — `dprint check` with real unified diff and optional pager
@@ -23,22 +24,53 @@ Config file: `~/.config/dprint/dprintx.jsonc`
 ```jsonc
 {
   "dprint": "~/.cargo/bin/dprint",
+
+  "diff_pager": "delta -s",
+  "lsp_rewrite_uris": true,
+
   "profiles": {
     "maintainer": "~/.config/dprint/dprint-maintainer.jsonc",
     "default": "~/.config/dprint/dprint-default.jsonc",
+    "ignore": null, // null = skip file entirely
   },
+
   "match": {
     "**/noc/cmdb/**": "maintainer",
     "**/noc/invapi/**": "maintainer",
     "**": "default",
   },
-  "diff_pager": "delta -s",
-  "lsp_rewrite_uris": true,
+
+  "match_content": {
+    "^// Code generated .+ DO NOT EDIT": "ignore",
+  },
 }
 ```
 
 Rules in `match` are evaluated top-to-bottom, first match wins. Files not matching any rule are skipped. Use
-`"**": "profile"` as a catch-all.
+`"**": "profile"` as a catch-all. Profiles set to `null` cause the file to be skipped (passed through unchanged).
+
+### Content-based matching
+
+`match_content` lets you override the path-matched profile based on file content. This is useful for skipping generated
+files that live alongside hand-written code.
+
+```jsonc
+{
+  "match_content": {
+    "^// Code generated .+ DO NOT EDIT": "ignore",
+    "^# Code generated .+ DO NOT EDIT": "ignore",
+  },
+}
+```
+
+**How it works:**
+
+1. File is first matched by path (`match` rules) — if no path match, the file is skipped entirely
+2. If `match_content` is configured, the file is scanned in line-aligned blocks (~8KB each)
+3. Each regex pattern is tested against each block, first match wins (stops scanning early)
+4. The matched profile overrides the path-based result
+
+Patterns are regular expressions (Rust `regex` syntax, multi-line mode: `^` matches start of any line).
 
 ### diff_pager
 

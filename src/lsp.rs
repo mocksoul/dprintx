@@ -7,7 +7,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::config::{self, DprintxConfig};
+use crate::config::{self, DprintxConfig, ProfileResolution};
 use crate::matcher::ProfileMatcher;
 
 /// Timeout for reading LSP responses from backends.
@@ -154,7 +154,8 @@ impl LspProxy {
                     let mut seen = std::collections::HashSet::new();
                     for (_pattern, profile_name) in self.config.match_rules_iter() {
                         if seen.insert(profile_name.to_string())
-                            && let Some(config_path) = self.config.profile_config_path(profile_name)
+                            && let Some(ProfileResolution::Config(config_path)) =
+                                self.config.resolve_profile(profile_name)
                         {
                             profile_configs.push(config_path);
                         }
@@ -289,7 +290,7 @@ impl LspProxy {
                         let file_path = uri_to_path(&uri);
                         let profile_config =
                             match self.matcher.resolve_config(&file_path, &self.config) {
-                                Ok(Some(p)) => p,
+                                Ok(Some(ProfileResolution::Config(p))) => p,
                                 _ => {
                                     // No profile matched — respond with null result if it's a request.
                                     if let Some(id) = parsed.get("id").cloned() {
