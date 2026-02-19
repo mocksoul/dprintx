@@ -57,6 +57,12 @@ impl Drop for TempConfig {
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct DprintxConfig {
+    /// Directory containing the dprintx.jsonc config file.
+    /// Used to resolve relative paths in profile configs.
+    /// Populated after loading, not deserialized from JSON.
+    #[serde(skip)]
+    pub config_dir: PathBuf,
+
     /// Path to real dprint binary.
     pub dprint: String,
 
@@ -111,15 +117,28 @@ impl DprintxConfig {
         // Strip JSONC comments (// and /* */) before parsing.
         let json = strip_jsonc_comments(&content);
 
-        let config: DprintxConfig =
+        let mut config: DprintxConfig =
             serde_json::from_str(&json).with_context(|| "invalid dprintx.jsonc format")?;
+
+        // Store the config directory for resolving relative paths.
+        config.config_dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
 
         Ok(config)
     }
 
-    /// Resolve dprint binary path (expand ~).
+    /// Resolve dprint binary path (expand ~ and relative paths).
     pub fn dprint_path(&self) -> PathBuf {
-        expand_tilde(&self.dprint)
+        self.resolve_path(&self.dprint)
+    }
+
+    /// Resolve a path string: expand ~ and resolve relative paths against config_dir.
+    fn resolve_path(&self, path: &str) -> PathBuf {
+        let expanded = expand_tilde(path);
+        if expanded.is_relative() {
+            self.config_dir.join(expanded)
+        } else {
+            expanded
+        }
     }
 
     /// Resolve a profile name to its resolution (config path or ignore).
@@ -128,9 +147,13 @@ impl DprintxConfig {
     /// - `Some(Config(path))` if profile maps to a config file path
     /// - `Some(Ignore)` if profile is explicitly null
     /// - `None` if profile name is not defined
+    ///
+    /// Relative paths are resolved against the config file directory.
     pub fn resolve_profile(&self, profile_name: &str) -> Option<ProfileResolution> {
         match self.profiles.get(profile_name) {
-            Some(serde_json::Value::String(s)) => Some(ProfileResolution::Config(expand_tilde(s))),
+            Some(serde_json::Value::String(s)) => {
+                Some(ProfileResolution::Config(self.resolve_path(s)))
+            }
             Some(serde_json::Value::Null) => Some(ProfileResolution::Ignore),
             _ => None,
         }
@@ -559,6 +582,86 @@ mod tests {
                 "/config/dprint-default.jsonc"
             )))
         );
+    }
+
+    #[test]
+    fn test_resolve_profile_relative_paths() {
+        let config_json = r#"{
+            "dprint": "./bin/dprint",
+            "profiles": {
+                "maintainer": "./profiles/maintainer.jsonc",
+                "default": "./profiles/default.jsonc",
+                "absolute": "/etc/dprint/absolute.jsonc",
+                "tilde": "~/configs/tilde.jsonc",
+                "ignore": null
+            },
+            "match": { "**": "default" }
+        }"#;
+        let mut config: DprintxConfig = serde_json::from_str(config_json).unwrap();
+        config.config_dir = PathBuf::from("/home/user/.config/dprint");
+
+        // Relative paths resolved against config_dir.
+        assert_eq!(
+            config.resolve_profile("maintainer"),
+            Some(ProfileResolution::Config(PathBuf::from(
+                "/home/user/.config/dprint/profiles/maintainer.jsonc"
+            )))
+        );
+        assert_eq!(
+            config.resolve_profile("default"),
+            Some(ProfileResolution::Config(PathBuf::from(
+                "/home/user/.config/dprint/profiles/default.jsonc"
+            )))
+        );
+
+        // Absolute paths stay as-is.
+        assert_eq!(
+            config.resolve_profile("absolute"),
+            Some(ProfileResolution::Config(PathBuf::from(
+                "/etc/dprint/absolute.jsonc"
+            )))
+        );
+
+        // Tilde-expanded paths are absolute, stay as-is.
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            config.resolve_profile("tilde"),
+            Some(ProfileResolution::Config(home.join("configs/tilde.jsonc")))
+        );
+
+        // Null profile stays Ignore.
+        assert_eq!(
+            config.resolve_profile("ignore"),
+            Some(ProfileResolution::Ignore)
+        );
+
+        // dprint binary path also resolved.
+        assert_eq!(
+            config.dprint_path(),
+            PathBuf::from("/home/user/.config/dprint/bin/dprint")
+        );
+    }
+
+    #[test]
+    fn test_load_sets_config_dir() {
+        let dir = std::env::temp_dir().join("dprintx-test-load-dir");
+        let _ = std::fs::create_dir_all(&dir);
+
+        let config_path = dir.join("dprintx.jsonc");
+        std::fs::write(
+            &config_path,
+            r#"{
+                "dprint": "/usr/bin/dprint",
+                "profiles": { "default": "/config/default.jsonc" },
+                "match": { "**": "default" }
+            }"#,
+        )
+        .unwrap();
+
+        let config = DprintxConfig::load(&config_path).unwrap();
+        assert_eq!(config.config_dir, dir);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

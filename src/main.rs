@@ -112,15 +112,15 @@ fn cmd_config(matcher: &ProfileMatcher, config: &DprintxConfig, file: Option<&st
         None => {
             println!("dprint: {}", config.dprint_path().display());
             println!("profiles:");
-            for (name, value) in &config.profiles {
-                match value {
-                    serde_json::Value::String(path) => {
-                        println!("  {name}: {}", config::expand_tilde(path).display());
+            for (name, _) in &config.profiles {
+                match config.resolve_profile(name) {
+                    Some(ProfileResolution::Config(path)) => {
+                        println!("  {name}: {}", path.display());
                     }
-                    serde_json::Value::Null => {
+                    Some(ProfileResolution::Ignore) => {
                         println!("  {name}: (ignore)");
                     }
-                    _ => {}
+                    None => {}
                 }
             }
             println!("match rules:");

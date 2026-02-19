@@ -49,6 +49,18 @@ Config file: `~/.config/dprint/dprintx.jsonc`
 Rules in `match` are evaluated top-to-bottom, first match wins. Files not matching any rule are skipped. Use
 `"**": "profile"` as a catch-all. Profiles set to `null` cause the file to be skipped (passed through unchanged).
 
+All paths in the config (`dprint`, profile paths) support `~` expansion and relative paths. Relative paths are resolved
+against the directory containing `dprintx.jsonc`:
+
+```jsonc
+{
+  "dprint": "bin/dprint",          // → ~/.config/dprint/bin/dprint
+  "profiles": {
+    "main": "profiles/main.jsonc", // → ~/.config/dprint/profiles/main.jsonc
+  },
+}
+```
+
 ### Content-based matching
 
 `match_content` lets you override the path-matched profile based on file content. This is useful for skipping generated
