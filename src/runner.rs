@@ -294,25 +294,50 @@ impl DprintRunner {
     /// For each profile, runs `dprint output-file-paths --config <profile>` to get the
     /// file list, filters by match rules, then runs `dprint fmt --config <profile> <files>`.
     pub fn fmt_all(&self, matcher: &ProfileMatcher, config: &DprintxConfig) -> Result<()> {
-        self.run_all("fmt", matcher, config)
+        self.run_all("fmt", matcher, config, None)
+    }
+
+    /// Format files under specific directories using all profiles.
+    pub fn fmt_dirs(
+        &self,
+        dirs: &[PathBuf],
+        matcher: &ProfileMatcher,
+        config: &DprintxConfig,
+    ) -> Result<()> {
+        self.run_all("fmt", matcher, config, Some(dirs))
     }
 
     /// Check all files using all profiles.
     /// If diff_pager is configured, produces unified diff output.
     pub fn check_all(&self, matcher: &ProfileMatcher, config: &DprintxConfig) -> Result<()> {
         if config.diff_pager.is_some() {
-            return self.check_diff_all(matcher, config);
+            return self.check_diff_all(matcher, config, None);
         }
-        self.run_all("check", matcher, config)
+        self.run_all("check", matcher, config, None)
+    }
+
+    /// Check files under specific directories using all profiles.
+    pub fn check_dirs(
+        &self,
+        dirs: &[PathBuf],
+        matcher: &ProfileMatcher,
+        config: &DprintxConfig,
+    ) -> Result<()> {
+        if config.diff_pager.is_some() {
+            return self.check_diff_all(matcher, config, Some(dirs));
+        }
+        self.run_all("check", matcher, config, Some(dirs))
     }
 
     /// Run a subcommand (fmt/check) for all profiles.
     /// Files are grouped by effective config (merged local + profile, or just profile).
+    /// If `dir_filter` is set, only files under those directories are included.
     fn run_all(
         &self,
         subcmd: &str,
         matcher: &ProfileMatcher,
         config: &DprintxConfig,
+        dir_filter: Option<&[PathBuf]>,
     ) -> Result<()> {
         let mut failed = false;
 
@@ -354,6 +379,14 @@ impl DprintRunner {
 
             let file_list = String::from_utf8_lossy(&output.stdout);
             for line in file_list.lines() {
+                // Filter by directory prefixes if specified.
+                if let Some(dirs) = dir_filter {
+                    let file_path = std::path::Path::new(line);
+                    if !dirs.iter().any(|d| file_path.starts_with(d)) {
+                        continue;
+                    }
+                }
+
                 // Only include files that match this profile.
                 let resolved = matcher.resolve_config(std::path::Path::new(line), config);
                 match resolved {
@@ -478,7 +511,13 @@ impl DprintRunner {
     // ---- diff_pager support ----
 
     /// Check all files with unified diff output.
-    fn check_diff_all(&self, matcher: &ProfileMatcher, config: &DprintxConfig) -> Result<()> {
+    /// If `dir_filter` is set, only files under those directories are included.
+    fn check_diff_all(
+        &self,
+        matcher: &ProfileMatcher,
+        config: &DprintxConfig,
+        dir_filter: Option<&[PathBuf]>,
+    ) -> Result<()> {
         let mut all_diff = String::new();
         let mut _guards: Vec<config::TempConfig> = Vec::new();
 
@@ -497,6 +536,14 @@ impl DprintRunner {
             // Get changed files for this profile.
             let changed = self.list_different(profile_config)?;
             for file in &changed {
+                // Filter by directory prefixes if specified.
+                if let Some(dirs) = dir_filter {
+                    let file_path = std::path::Path::new(file.as_str());
+                    if !dirs.iter().any(|d| file_path.starts_with(d)) {
+                        continue;
+                    }
+                }
+
                 // Filter: only files that belong to this profile.
                 let resolved = matcher.resolve_config(std::path::Path::new(file), config);
                 match resolved {

@@ -12,6 +12,20 @@ use config::{DprintxConfig, ProfileResolution};
 use matcher::ProfileMatcher;
 use runner::DprintRunner;
 
+/// Split arguments into plain files and directories.
+fn split_files_and_dirs(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut files = Vec::new();
+    let mut dirs = Vec::new();
+    for arg in args {
+        if Path::new(arg).is_dir() {
+            dirs.push(arg.clone());
+        } else {
+            files.push(arg.clone());
+        }
+    }
+    (files, dirs)
+}
+
 fn main() -> Result<()> {
     // Prevent infinite recursion when symlinked as `dprint` with no config.
     if std::env::var("DPRINTX_ACTIVE").is_ok() {
@@ -60,14 +74,38 @@ fn main() -> Result<()> {
             } else if files.is_empty() {
                 runner.fmt_all(&matcher, &config)?;
             } else {
-                runner.fmt_files(&files, &matcher, &config)?;
+                let (plain_files, dirs) = split_files_and_dirs(&files);
+                if !plain_files.is_empty() {
+                    runner.fmt_files(&plain_files, &matcher, &config)?;
+                }
+                if !dirs.is_empty() {
+                    let dir_paths: Vec<_> = dirs
+                        .iter()
+                        .map(|d| {
+                            std::fs::canonicalize(d).unwrap_or_else(|_| std::path::PathBuf::from(d))
+                        })
+                        .collect();
+                    runner.fmt_dirs(&dir_paths, &matcher, &config)?;
+                }
             }
         }
         CliCommand::Check { files } => {
             if files.is_empty() {
                 runner.check_all(&matcher, &config)?;
             } else {
-                runner.check_files(&files, &matcher, &config)?;
+                let (plain_files, dirs) = split_files_and_dirs(&files);
+                if !plain_files.is_empty() {
+                    runner.check_files(&plain_files, &matcher, &config)?;
+                }
+                if !dirs.is_empty() {
+                    let dir_paths: Vec<_> = dirs
+                        .iter()
+                        .map(|d| {
+                            std::fs::canonicalize(d).unwrap_or_else(|_| std::path::PathBuf::from(d))
+                        })
+                        .collect();
+                    runner.check_dirs(&dir_paths, &matcher, &config)?;
+                }
             }
         }
         CliCommand::Config { file } => {
@@ -84,6 +122,52 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_split_all_files() {
+        let args = vec!["foo.go".into(), "bar.rs".into()];
+        let (files, dirs) = split_files_and_dirs(&args);
+        // Non-existent paths are treated as files (not directories).
+        assert_eq!(files, vec!["foo.go", "bar.rs"]);
+        assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn test_split_all_dirs() {
+        let dir = std::env::temp_dir().join("dprintx-test-split-dirs");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let args = vec![dir.to_string_lossy().into_owned()];
+        let (files, dirs) = split_files_and_dirs(&args);
+        assert!(files.is_empty());
+        assert_eq!(dirs.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_split_mixed() {
+        let dir = std::env::temp_dir().join("dprintx-test-split-mixed");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let args = vec![
+            "explicit.go".into(),
+            dir.to_string_lossy().into_owned(),
+            "another.rs".into(),
+        ];
+        let (files, dirs) = split_files_and_dirs(&args);
+        assert_eq!(files, vec!["explicit.go", "another.rs"]);
+        assert_eq!(dirs.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 fn load_config(config_path: Option<&str>) -> Result<Option<DprintxConfig>> {

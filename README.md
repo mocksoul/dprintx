@@ -14,6 +14,7 @@ A wrapper around [dprint](https://dprint.dev/) that adds multi-config support an
 - **[LSP proxy](#cli)** — spawns per-profile `dprint lsp` backends, routes requests by file URI
 - **[LSP URI rewriting](#lsp-uri-rewriting)** — format extensionless files (shell scripts, etc.) by appending the
   correct extension based on editor's `languageId`
+- **[Directory arguments](#directory-arguments)** — pass directories to `fmt`/`check`, files are expanded recursively
 - **[Transparent drop-in](#transparent-dprint-replacement)** — symlink as `dprint`, all unknown commands passthrough to
   the real binary
 
@@ -149,6 +150,21 @@ The profile path is always prepended so that local settings win.
 
 If no local config is found, the profile config is used directly — no temp file is created.
 
+### Directory arguments
+
+dprint doesn't support directories as arguments (`dprint check src/` gives "Is a directory" error). dprintx handles
+directory arguments by using dprint's own file discovery (`output-file-paths`) filtered to the specified directories:
+
+```bash
+dprintx fmt src/                    # format all matched files under src/
+dprintx check pkg/internal/drafts   # check all matched files under the directory
+dprintx fmt a.go src/ b.rs          # mix of files and directories works too
+```
+
+Files are passed through as-is. Directories use the same pipeline as `dprintx fmt`/`dprintx check` without arguments —
+dprint discovers files via its own includes/excludes, then dprintx filters by profile match rules. This naturally skips
+binary files, build artifacts, and anything dprint wouldn't process on its own.
+
 ### LSP URI rewriting (opt-in)
 
 > **Disabled by default** for compatibility. Enable explicitly with `"lsp_rewrite_uris": true`.
@@ -202,6 +218,7 @@ dprintx fmt --stdin path/to/file.yaml < input.yaml
 dprintx fmt
 dprintx check
 dprintx fmt file1.go file2.yaml   # explicit file list
+dprintx check src/                # directory → recursively expanded
 
 # list all files that would be formatted (merged from all profiles)
 dprintx output-file-paths
