@@ -14,7 +14,8 @@ A wrapper around [dprint](https://dprint.dev/) that adds multi-config support an
 - **[LSP proxy](#cli)** — spawns per-profile `dprint lsp` backends, routes requests by file URI
 - **[LSP URI rewriting](#lsp-uri-rewriting)** — format extensionless files (shell scripts, etc.) by appending the
   correct extension based on editor's `languageId`
-- **[Directory arguments](#directory-arguments)** — pass directories to `fmt`/`check`, files are expanded recursively
+- **[Directory arguments](#directory-arguments)** — pass directories to `fmt`/`check`, scoped via dprint's file
+  discovery
 - **[Transparent drop-in](#transparent-dprint-replacement)** — symlink as `dprint`, all unknown commands passthrough to
   the real binary
 
